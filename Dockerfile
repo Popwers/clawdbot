@@ -60,6 +60,18 @@ RUN curl -fsSL https://astral.sh/uv/install.sh | sh && \
   ln -sf /root/.local/bin/uv /usr/local/bin/uv && \
   ln -sf /root/.local/bin/nano-pdf /usr/local/bin/nano-pdf
 
+# Local Whisper (speech-to-text, no API key)
+# Note: this pulls a CPU PyTorch wheel + Whisper; models download at runtime into ~/.cache/whisper.
+# Requires ffmpeg at runtime (install via CLAWDBOT_DOCKER_APT_PACKAGES or apt).
+RUN set -eux; \
+  apt-get update; \
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-pip ffmpeg; \
+  rm -rf /var/lib/apt/lists/*; \
+  python3 -m pip install --no-cache-dir --break-system-packages -U pip setuptools wheel; \
+  python3 -m pip install --no-cache-dir --break-system-packages --index-url https://download.pytorch.org/whl/cpu torch; \
+  python3 -m pip install --no-cache-dir --break-system-packages openai-whisper; \
+  whisper --help >/dev/null
+
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY ui/package.json ./ui/package.json
 COPY patches ./patches

@@ -69,10 +69,14 @@ RUN curl -fsSL https://astral.sh/uv/install.sh | sh && \
 # Local Whisper (speech-to-text, no API key)
 # Note: this pulls a CPU PyTorch wheel + Whisper.
 # We pre-download the chosen model at build time into XDG_CACHE_HOME so runtime doesn't need to download.
+#
+# Build reliability note:
+# - Some build environments (Coolify) intermittently fail on extra apt-get calls (exit code 100).
+# - We therefore rely on the base image / CLAWDBOT_DOCKER_APT_PACKAGES to provide python3 + pip + ffmpeg.
 RUN set -eux; \
-  apt-get update; \
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-pip ffmpeg; \
-  rm -rf /var/lib/apt/lists/*; \
+  command -v python3; \
+  python3 -m pip --version; \
+  command -v ffmpeg; \
   python3 -m pip install --no-cache-dir --break-system-packages -U pip setuptools wheel; \
   python3 -m pip install --no-cache-dir --break-system-packages --index-url https://download.pytorch.org/whl/cpu torch; \
   python3 -m pip install --no-cache-dir --break-system-packages openai-whisper; \

@@ -61,8 +61,8 @@ RUN curl -fsSL https://astral.sh/uv/install.sh | sh && \
   ln -sf /root/.local/bin/nano-pdf /usr/local/bin/nano-pdf
 
 # Local Whisper (speech-to-text, no API key)
-# Note: this pulls a CPU PyTorch wheel + Whisper; models download at runtime into ~/.cache/whisper.
-# Requires ffmpeg at runtime (install via CLAWDBOT_DOCKER_APT_PACKAGES or apt).
+# Note: this pulls a CPU PyTorch wheel + Whisper.
+# Models are pre-downloaded at build time into XDG_CACHE_HOME so runtime doesn't need to download.
 RUN set -eux; \
   apt-get update; \
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-pip ffmpeg; \
@@ -70,7 +70,10 @@ RUN set -eux; \
   python3 -m pip install --no-cache-dir --break-system-packages -U pip setuptools wheel; \
   python3 -m pip install --no-cache-dir --break-system-packages --index-url https://download.pytorch.org/whl/cpu torch; \
   python3 -m pip install --no-cache-dir --break-system-packages openai-whisper; \
-  whisper --help >/dev/null
+  mkdir -p /opt/whisper-cache && chmod 755 /opt/whisper-cache; \
+  XDG_CACHE_HOME=/opt/whisper-cache whisper --model small --language fr --help >/dev/null
+
+ENV XDG_CACHE_HOME=/opt/whisper-cache
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY ui/package.json ./ui/package.json

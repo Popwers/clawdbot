@@ -31,6 +31,12 @@ RUN bun add -g \
   mcporter \
   @steipete/oracle
 
+# OpenCode (terminal AI coding agent)
+RUN set -eux; \
+  curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path; \
+  install -m 0755 /root/.opencode/bin/opencode /usr/local/bin/opencode; \
+  rm -rf /root/.opencode
+
 # gog (gogcli) binary from GitHub releases
 RUN set -eux; \
   arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
@@ -89,5 +95,13 @@ RUN pnpm ui:install
 RUN pnpm ui:build
 
 ENV NODE_ENV=production
+
+# OpenCode default config (from Popwers/dotfiles)
+RUN set -eux; \
+  mkdir -p /home/node/.config/opencode/command; \
+  cp -f /app/assets/opencode/opencode.json /home/node/.config/opencode/opencode.json; \
+  cp -f /app/assets/opencode/oh-my-opencode.json /home/node/.config/opencode/oh-my-opencode.json; \
+  cp -f /app/assets/opencode/command/supermemory-init.md /home/node/.config/opencode/command/supermemory-init.md; \
+  chown -R 1000:1000 /home/node/.config/opencode
 
 CMD ["node", "dist/index.js"]

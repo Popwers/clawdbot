@@ -62,7 +62,7 @@ RUN curl -fsSL https://astral.sh/uv/install.sh | sh && \
 
 # Local Whisper (speech-to-text, no API key)
 # Note: this pulls a CPU PyTorch wheel + Whisper.
-# Models are pre-downloaded at build time into XDG_CACHE_HOME so runtime doesn't need to download.
+# We pre-download the chosen model at build time into XDG_CACHE_HOME so runtime doesn't need to download.
 RUN set -eux; \
   apt-get update; \
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-pip ffmpeg; \
@@ -71,7 +71,8 @@ RUN set -eux; \
   python3 -m pip install --no-cache-dir --break-system-packages --index-url https://download.pytorch.org/whl/cpu torch; \
   python3 -m pip install --no-cache-dir --break-system-packages openai-whisper; \
   mkdir -p /opt/whisper-cache && chmod 755 /opt/whisper-cache; \
-  XDG_CACHE_HOME=/opt/whisper-cache whisper --model small --language fr --help >/dev/null
+  XDG_CACHE_HOME=/opt/whisper-cache python3 -c "import whisper; whisper.load_model('base')"; \
+  whisper --help >/dev/null
 
 ENV XDG_CACHE_HOME=/opt/whisper-cache
 

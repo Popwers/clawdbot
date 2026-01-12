@@ -1,5 +1,8 @@
 services:
   clawdbot-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: ${CLAWDBOT_IMAGE:-clawdbot:local}
     environment:
       HOME: /home/node

@@ -58,3 +58,4 @@ services:
 
 volumes:
   clawdbot-whisper-cache:
+    name: ${CLAWDBOT_WHISPER_CACHE_VOLUME:-clawdbot-whisper-cache}

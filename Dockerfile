@@ -91,8 +91,12 @@ FROM base AS final
 # Install blogwatcher (built in builder stage)
 COPY --from=blogwatcher-builder /root/go/bin/blogwatcher /usr/local/bin/blogwatcher
 
-# Install whisper.cpp CLI
+# Install whisper.cpp CLI + shared libraries
 COPY --from=whispercpp-builder /tmp/whispercpp/build/bin/whisper-cli /usr/local/bin/whisper-cli
+# Runtime deps (built as shared libs by default)
+COPY --from=whispercpp-builder /tmp/whispercpp/build/src/libwhisper.so* /usr/local/lib/
+COPY --from=whispercpp-builder /tmp/whispercpp/build/ggml/src/libggml.so* /usr/local/lib/
+RUN ldconfig
 
 # whisper.cpp model cache (mounted as a volume in docker-compose)
 ENV XDG_CACHE_HOME=/opt/whisper-cache

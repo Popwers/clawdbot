@@ -93,7 +93,7 @@ COPY --from=blogwatcher-builder /root/go/bin/blogwatcher /usr/local/bin/blogwatc
 COPY --from=whispercpp-builder /tmp/whispercpp/build/bin/whisper-cli /usr/local/bin/whisper-cli
 # Runtime deps (built as shared libs by default)
 COPY --from=whispercpp-builder /tmp/whispercpp/build/src/libwhisper.so* /usr/local/lib/
-COPY --from=whispercpp-builder /tmp/whispercpp/build/ggml/src/libggml.so* /usr/local/lib/
+COPY --from=whispercpp-builder /tmp/whispercpp/build/ggml/src/libggml*.so* /usr/local/lib/
 RUN ldconfig
 
 # whisper.cpp model cache (mounted as a volume in docker-compose)

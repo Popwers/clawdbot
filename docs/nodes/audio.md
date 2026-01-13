@@ -14,13 +14,13 @@ read_when:
 - **Verbose logging**: In `--verbose`, we log when transcription runs and when the transcript replaces the body.
 
 ## Config example (Whisper CLI)
-Requires `whisper` CLI installed:
+Requires a `whisper` CLI installed (this can be `whisper.cpp` via the `whisper` wrapper):
 ```json5
 {
   tools: {
     audio: {
       transcription: {
-        args: ["--model", "base", "{{MediaPath}}"],
+        args: ["--model", "base", "--language", "fr", "{{MediaPath}}"],
         timeoutSeconds: 45
       }
     }

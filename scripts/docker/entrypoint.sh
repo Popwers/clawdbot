@@ -17,7 +17,8 @@ preload_whisper() {
   local model="${CLAWDBOT_WHISPER_MODEL:-base}"
   local preload="${CLAWDBOT_WHISPER_PRELOAD:-true}"
   local cache_home="${XDG_CACHE_HOME:-/opt/whisper-cache}"
-  local cache_dir="${cache_home%/}/whisper"
+  local cache_dir="${cache_home%/}/whisper.cpp"
+  local model_path="$cache_dir/ggml-${model}.bin"
 
   if [[ "$preload" != "true" ]]; then
     return 0
@@ -26,17 +27,26 @@ preload_whisper() {
   mkdir -p "$cache_dir"
   chown -R 1000:1000 "$cache_home" 2>/dev/null || true
 
-  if [[ -f "$cache_dir/${model}.pt" || -f "$cache_dir/${model}.en.pt" ]]; then
+  if [[ -f "$model_path" ]]; then
     return 0
   fi
 
-  echo "[clawdbot] whisper: preloading model '$model' into $cache_dir" >&2
-  python3 - <<PY || echo "[clawdbot] whisper: preload failed (will download on first use)" >&2
-import os
-import whisper
-model = os.environ.get("CLAWDBOT_WHISPER_MODEL", "base")
-whisper.load_model(model)
-PY
+  echo "[clawdbot] whisper.cpp: downloading model '${model}' into $model_path" >&2
+
+  # Official model URLs are hosted by the whisper.cpp project.
+  local url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${model_path##*/}"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "$model_path" "$url" || true
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$model_path" "$url" || true
+  fi
+
+  if [[ ! -f "$model_path" ]]; then
+    echo "[clawdbot] whisper.cpp: preload failed (will download on demand when transcription runs)" >&2
+    return 0
+  fi
+
+  chmod a+r "$model_path" 2>/dev/null || true
 }
 
 preload_whisper

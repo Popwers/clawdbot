@@ -71,7 +71,7 @@ RUN curl -fsSL https://astral.sh/uv/install.sh | sh && \
 
 # Local Whisper (speech-to-text, no API key)
 # Note: this pulls a CPU PyTorch wheel + Whisper.
-# We pre-download the chosen model at build time into XDG_CACHE_HOME so runtime doesn't need to download.
+# We preload the model on first container start into XDG_CACHE_HOME so restarts are fast.
 #
 # Build reliability note:
 # - Some build environments (Coolify) intermittently fail on extra apt-get calls (exit code 100).
@@ -80,8 +80,7 @@ RUN set -eux; \
   python3 -m pip install --no-cache-dir --break-system-packages -U pip setuptools wheel; \
   python3 -m pip install --no-cache-dir --break-system-packages --index-url https://download.pytorch.org/whl/cpu torch; \
   python3 -m pip install --no-cache-dir --break-system-packages openai-whisper; \
-  mkdir -p /opt/whisper-cache && chmod 755 /opt/whisper-cache; \
-  XDG_CACHE_HOME=/opt/whisper-cache python3 -c "import whisper; whisper.load_model('base')"
+  mkdir -p /opt/whisper-cache && chmod 755 /opt/whisper-cache
 
 ENV XDG_CACHE_HOME=/opt/whisper-cache
 

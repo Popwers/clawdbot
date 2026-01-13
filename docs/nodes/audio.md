@@ -18,6 +18,7 @@ read_when:
 ## Config examples
 
 ### Provider + CLI fallback (OpenAI + Whisper CLI)
+Requires a `whisper` CLI installed (this can be `whisper.cpp` via a `whisper` wrapper):
 ```json5
 {
   tools: {
@@ -49,13 +50,9 @@ read_when:
         enabled: true,
         scope: {
           default: "allow",
-          rules: [
-            { action: "deny", match: { chatType: "group" } }
-          ]
+          rules: [{ action: "deny", match: { chatType: "group" } }]
         },
-        models: [
-          { provider: "openai", model: "whisper-1" }
-        ]
+        models: [{ provider: "openai", model: "whisper-1" }]
       }
     }
   }

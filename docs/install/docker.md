@@ -46,8 +46,8 @@ This script:
 Optional env vars:
 - `CLAWDBOT_DOCKER_APT_PACKAGES` — override the default apt packages installed during build (batteries-included by default)
 - `CLAWDBOT_USE_OPENCODE` — set to `true` to install OpenCode and sync the default `~/.config/opencode` on container start (default: `false`)
-- `CLAWDBOT_WHISPER_PRELOAD` — set to `false` to skip preloading Whisper model on container start (default: `true`)
-- `CLAWDBOT_WHISPER_MODEL` — Whisper model to preload (default: `base`)
+- `CLAWDBOT_WHISPER_PRELOAD` — set to `false` to skip preloading the `whisper.cpp` model on container start (default: `true`)
+- `CLAWDBOT_WHISPER_MODEL` — `whisper.cpp` model name to preload (default: `base`)
 - `CLAWDBOT_EXTRA_MOUNTS` — add extra host bind mounts
 - `CLAWDBOT_HOME_VOLUME` — persist `/home/node` in a named volume
 

@@ -33,6 +33,7 @@ Note: Binary detection is best-effort across macOS/Linux/Windows; ensure the CLI
 ## Config examples
 
 ### Provider + CLI fallback (OpenAI + Whisper CLI)
+Requires a `whisper` CLI installed (this can be `whisper.cpp` via a `whisper` wrapper):
 ```json5
 {
   tools: {
@@ -64,9 +65,7 @@ Note: Binary detection is best-effort across macOS/Linux/Windows; ensure the CLI
         enabled: true,
         scope: {
           default: "allow",
-          rules: [
-            { action: "deny", match: { chatType: "group" } }
-          ]
+          rules: [{ action: "deny", match: { chatType: "group" } }]
         },
         models: [
           { provider: "openai", model: "gpt-4o-mini-transcribe" }

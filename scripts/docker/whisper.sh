@@ -102,9 +102,21 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 out_prefix="$tmp_dir/out"
 
+input="$audio"
+
+# whisper-cli expects 16-bit WAV. Convert other formats via ffmpeg.
+if [[ "$audio" != *.wav ]]; then
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "[clawdbot] whisper.cpp: ffmpeg missing; cannot convert $audio to wav" >&2
+    exit 1
+  fi
+  input="$tmp_dir/in.wav"
+  ffmpeg -hide_banner -loglevel error -y -i "$audio" -ac 1 -ar 16000 -c:a pcm_s16le "$input"
+fi
+
 cli_args=(
   "--model" "$model_path"
-  "--file" "$audio"
+  "--file" "$input"
   "-otxt"
   "-of" "$out_prefix"
 )
@@ -113,6 +125,6 @@ if [[ -n "$language" ]]; then
   cli_args+=("--language" "$language")
 fi
 
-/usr/local/bin/whisper-cli "${cli_args[@]}" >/dev/null
+/usr/local/bin/whisper-cli "${cli_args[@]}" >/dev/null 2>&1
 
 cat "${out_prefix}.txt"

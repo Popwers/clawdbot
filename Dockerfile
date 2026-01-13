@@ -1,4 +1,6 @@
-FROM node:22-bookworm
+# syntax=docker/dockerfile:1
+
+FROM node:22-bookworm AS base
 
 # Install Bun (required for build scripts)
 RUN curl -fsSL https://bun.sh/install | bash
@@ -22,6 +24,7 @@ RUN if [ -n "$CLAWDBOT_DOCKER_APT_PACKAGES" ]; then \
 ARG TARGETARCH
 ARG GOGCLI_VERSION=0.6.0
 ARG GO_VERSION=1.24.1
+ARG WHISPER_CPP_VERSION=v1.8.2
 
 # Node CLIs (via bun): bird, summarize, clawdhub, mcporter, oracle
 RUN bun add -g \
@@ -52,37 +55,51 @@ RUN set -eux; \
   install -m 0755 /tmp/gog /usr/local/bin/gog; \
   rm -f /tmp/gog.tgz
 
-# Go toolchain (for blogwatcher) + install blogwatcher
-RUN set -eux; \
-  arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
-  curl -fsSL -o /tmp/go.tgz "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz"; \
-  rm -rf /usr/local/go; \
-  tar -C /usr/local -xzf /tmp/go.tgz; \
-  rm -f /tmp/go.tgz
-ENV PATH="/usr/local/go/bin:${PATH}"
-RUN go install github.com/Hyaxia/blogwatcher/cmd/blogwatcher@latest && \
-  install -m 0755 /root/go/bin/blogwatcher /usr/local/bin/blogwatcher
-
 # uv + nano-pdf
 RUN curl -fsSL https://astral.sh/uv/install.sh | sh && \
   /root/.local/bin/uv tool install nano-pdf && \
   ln -sf /root/.local/bin/uv /usr/local/bin/uv && \
   ln -sf /root/.local/bin/nano-pdf /usr/local/bin/nano-pdf
 
-# Local Whisper (speech-to-text, no API key)
-# Note: this pulls a CPU PyTorch wheel + Whisper.
-# We preload the model on first container start into XDG_CACHE_HOME so restarts are fast.
-#
-# Build reliability note:
-# - Some build environments (Coolify) intermittently fail on extra apt-get calls (exit code 100).
-# - We therefore rely on the base image / CLAWDBOT_DOCKER_APT_PACKAGES to provide python3 + pip + ffmpeg.
-RUN set -eux; \
-  python3 -m pip install --no-cache-dir --break-system-packages -U pip setuptools wheel; \
-  python3 -m pip install --no-cache-dir --break-system-packages --index-url https://download.pytorch.org/whl/cpu torch; \
-  python3 -m pip install --no-cache-dir --break-system-packages openai-whisper; \
-  mkdir -p /opt/whisper-cache && chmod 755 /opt/whisper-cache
+# ---- Builder stages (toolchains kept out of final image) ----
 
+FROM base AS blogwatcher-builder
+RUN set -eux; \
+  arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+  curl -fsSL -o /tmp/go.tgz "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz"; \
+  tar -C /usr/local -xzf /tmp/go.tgz; \
+  rm -f /tmp/go.tgz
+ENV PATH="/usr/local/go/bin:${PATH}"
+RUN go install github.com/Hyaxia/blogwatcher/cmd/blogwatcher@latest
+
+FROM base AS whispercpp-builder
+RUN set -eux; \
+  apt-get update; \
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    pkg-config; \
+  rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+RUN git clone --depth 1 --branch "${WHISPER_CPP_VERSION}" https://github.com/ggerganov/whisper.cpp.git /tmp/whispercpp
+RUN cmake -S /tmp/whispercpp -B /tmp/whispercpp/build -DCMAKE_BUILD_TYPE=Release
+RUN cmake --build /tmp/whispercpp/build -j
+
+# ---- Final image ----
+
+FROM base AS final
+
+# Install blogwatcher (built in builder stage)
+COPY --from=blogwatcher-builder /root/go/bin/blogwatcher /usr/local/bin/blogwatcher
+
+# Install whisper.cpp CLI
+COPY --from=whispercpp-builder /tmp/whispercpp/build/bin/whisper-cli /usr/local/bin/whisper-cli
+
+# whisper.cpp model cache (mounted as a volume in docker-compose)
 ENV XDG_CACHE_HOME=/opt/whisper-cache
+RUN mkdir -p /opt/whisper-cache && chmod 755 /opt/whisper-cache
+
+COPY scripts/docker/whisper.sh /usr/local/bin/whisper
+RUN chmod +x /usr/local/bin/whisper
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY ui/package.json ./ui/package.json

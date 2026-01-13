@@ -26,12 +26,15 @@ mkdir -p "${CLAWDBOT_WORKSPACE_DIR:-$HOME/clawd}"
 
 export CLAWDBOT_CONFIG_DIR="${CLAWDBOT_CONFIG_DIR:-$HOME/.clawdbot}"
 export CLAWDBOT_WORKSPACE_DIR="${CLAWDBOT_WORKSPACE_DIR:-$HOME/clawd}"
+export CLAWDBOT_USER_CONFIG_DIR="${CLAWDBOT_USER_CONFIG_DIR:-$HOME/.config}"
 export CLAWDBOT_GATEWAY_PORT="${CLAWDBOT_GATEWAY_PORT:-18789}"
 export CLAWDBOT_BRIDGE_PORT="${CLAWDBOT_BRIDGE_PORT:-18790}"
 export CLAWDBOT_GATEWAY_BIND="${CLAWDBOT_GATEWAY_BIND:-lan}"
 export CLAWDBOT_IMAGE="$IMAGE_NAME"
 export CLAWDBOT_DOCKER_APT_PACKAGES="${CLAWDBOT_DOCKER_APT_PACKAGES:-bash ca-certificates chromium curl fonts-liberation fonts-noto-color-emoji gh git pandoc python3-pip jq novnc python3 socat websockify x11vnc xvfb ripgrep ffmpeg tmux tar xz-utils git}"
 export CLAWDBOT_USE_OPENCODE="${CLAWDBOT_USE_OPENCODE:-false}"
+export CLAWDBOT_WHISPER_PRELOAD="${CLAWDBOT_WHISPER_PRELOAD:-true}"
+export CLAWDBOT_WHISPER_MODEL="${CLAWDBOT_WHISPER_MODEL:-base}"
 
 if [[ -z "${CLAWDBOT_GATEWAY_TOKEN:-}" ]]; then
   if command -v openssl >/dev/null 2>&1; then
@@ -157,6 +160,7 @@ upsert_env() {
 upsert_env "$ENV_FILE" \
   CLAWDBOT_CONFIG_DIR \
   CLAWDBOT_WORKSPACE_DIR \
+  CLAWDBOT_USER_CONFIG_DIR \
   CLAWDBOT_GATEWAY_PORT \
   CLAWDBOT_BRIDGE_PORT \
   CLAWDBOT_GATEWAY_BIND \
@@ -165,7 +169,9 @@ upsert_env "$ENV_FILE" \
   CLAWDBOT_EXTRA_MOUNTS \
   CLAWDBOT_HOME_VOLUME \
   CLAWDBOT_DOCKER_APT_PACKAGES \
-  CLAWDBOT_USE_OPENCODE
+  CLAWDBOT_USE_OPENCODE \
+  CLAWDBOT_WHISPER_PRELOAD \
+  CLAWDBOT_WHISPER_MODEL
 
 echo "==> Building Docker image: $IMAGE_NAME"
 docker build \

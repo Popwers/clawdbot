@@ -8,7 +8,7 @@ RUN corepack enable
 
 WORKDIR /app
 
-ARG CLAWDBOT_DOCKER_APT_PACKAGES=""
+ARG CLAWDBOT_DOCKER_APT_PACKAGES="bash ca-certificates chromium curl fonts-liberation fonts-noto-color-emoji gh git pandoc python3-pip jq novnc python3 socat websockify x11vnc xvfb ripgrep ffmpeg tmux tar xz-utils git"
 RUN if [ -n "$CLAWDBOT_DOCKER_APT_PACKAGES" ]; then \
       apt-get update && \
       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $CLAWDBOT_DOCKER_APT_PACKAGES && \
@@ -32,10 +32,13 @@ RUN bun add -g \
   @steipete/oracle
 
 # OpenCode (terminal AI coding agent)
+ARG CLAWDBOT_USE_OPENCODE="false"
 RUN set -eux; \
-  curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path; \
-  install -m 0755 /root/.opencode/bin/opencode /usr/local/bin/opencode; \
-  rm -rf /root/.opencode
+  if [ "$CLAWDBOT_USE_OPENCODE" = "true" ]; then \
+    curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path; \
+    install -m 0755 /root/.opencode/bin/opencode /usr/local/bin/opencode; \
+    rm -rf /root/.opencode; \
+  fi
 
 # gog (gogcli) binary from GitHub releases
 RUN set -eux; \
@@ -69,16 +72,16 @@ RUN curl -fsSL https://astral.sh/uv/install.sh | sh && \
 # Local Whisper (speech-to-text, no API key)
 # Note: this pulls a CPU PyTorch wheel + Whisper.
 # We pre-download the chosen model at build time into XDG_CACHE_HOME so runtime doesn't need to download.
+#
+# Build reliability note:
+# - Some build environments (Coolify) intermittently fail on extra apt-get calls (exit code 100).
+# - We therefore rely on the base image / CLAWDBOT_DOCKER_APT_PACKAGES to provide python3 + pip + ffmpeg.
 RUN set -eux; \
-  apt-get update; \
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-pip ffmpeg; \
-  rm -rf /var/lib/apt/lists/*; \
   python3 -m pip install --no-cache-dir --break-system-packages -U pip setuptools wheel; \
   python3 -m pip install --no-cache-dir --break-system-packages --index-url https://download.pytorch.org/whl/cpu torch; \
   python3 -m pip install --no-cache-dir --break-system-packages openai-whisper; \
   mkdir -p /opt/whisper-cache && chmod 755 /opt/whisper-cache; \
-  XDG_CACHE_HOME=/opt/whisper-cache python3 -c "import whisper; whisper.load_model('base')"; \
-  whisper --help >/dev/null
+  XDG_CACHE_HOME=/opt/whisper-cache python3 -c "import whisper; whisper.load_model('base')"
 
 ENV XDG_CACHE_HOME=/opt/whisper-cache
 
@@ -98,10 +101,12 @@ ENV NODE_ENV=production
 
 # OpenCode default config (from Popwers/dotfiles)
 RUN set -eux; \
-  mkdir -p /home/node/.config/opencode/command; \
-  cp -f /app/assets/opencode/opencode.json /home/node/.config/opencode/opencode.json; \
-  cp -f /app/assets/opencode/oh-my-opencode.json /home/node/.config/opencode/oh-my-opencode.json; \
-  cp -f /app/assets/opencode/command/supermemory-init.md /home/node/.config/opencode/command/supermemory-init.md; \
-  chown -R 1000:1000 /home/node/.config/opencode
+  if [ "$CLAWDBOT_USE_OPENCODE" = "true" ]; then \
+    git clone --depth 1 https://github.com/Popwers/dotfiles.git /tmp/dotfiles; \
+    mkdir -p /home/node/.config; \
+    cp -a /tmp/dotfiles/opencode /home/node/.config/opencode; \
+    rm -rf /tmp/dotfiles; \
+    chown -R 1000:1000 /home/node/.config/opencode; \
+  fi
 
 CMD ["node", "dist/index.js"]

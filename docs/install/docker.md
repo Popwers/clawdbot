@@ -44,7 +44,8 @@ This script:
 - generates a gateway token and writes it to `.env`
 
 Optional env vars:
-- `CLAWDBOT_DOCKER_APT_PACKAGES` — install extra apt packages during build
+- `CLAWDBOT_DOCKER_APT_PACKAGES` — override the default apt packages installed during build (batteries-included by default)
+- `CLAWDBOT_USE_OPENCODE` — set to `true` to install + enable OpenCode inside the image (default: `false`)
 - `CLAWDBOT_EXTRA_MOUNTS` — add extra host bind mounts
 - `CLAWDBOT_HOME_VOLUME` — persist `/home/node` in a named volume
 

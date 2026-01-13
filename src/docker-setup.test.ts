@@ -77,9 +77,12 @@ describe("docker-setup.sh", () => {
     expect(result.status).toBe(0);
 
     const envFile = await readFile(join(rootDir, ".env"), "utf8");
-    expect(envFile).toContain("CLAWDBOT_DOCKER_APT_PACKAGES=");
+    expect(envFile).toContain(
+      "CLAWDBOT_DOCKER_APT_PACKAGES=bash ca-certificates chromium curl fonts-liberation fonts-noto-color-emoji gh git pandoc python3-pip jq novnc python3 socat websockify x11vnc xvfb ripgrep ffmpeg tmux tar xz-utils git",
+    );
     expect(envFile).toContain("CLAWDBOT_EXTRA_MOUNTS=");
     expect(envFile).toContain("CLAWDBOT_HOME_VOLUME=");
+    expect(envFile).toContain("CLAWDBOT_USE_OPENCODE=false");
   });
 
   it("plumbs CLAWDBOT_DOCKER_APT_PACKAGES into .env and docker build args", async () => {
@@ -116,6 +119,7 @@ describe("docker-setup.sh", () => {
       CLAWDBOT_WORKSPACE_DIR: join(rootDir, "clawd"),
       CLAWDBOT_EXTRA_MOUNTS: "",
       CLAWDBOT_HOME_VOLUME: "",
+      CLAWDBOT_USE_OPENCODE: "false",
     };
 
     const result = spawnSync("bash", [scriptPath], {
@@ -135,5 +139,6 @@ describe("docker-setup.sh", () => {
     expect(log).toContain(
       "--build-arg CLAWDBOT_DOCKER_APT_PACKAGES=ffmpeg build-essential",
     );
+    expect(log).toContain("--build-arg CLAWDBOT_USE_OPENCODE=false");
   });
 });

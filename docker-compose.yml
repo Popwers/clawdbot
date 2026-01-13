@@ -55,3 +55,6 @@ services:
   #  tty: true
   #   init: true
   #  entrypoint: ["node", "dist/index.js"]
+
+volumes:
+  clawdbot-whisper-cache:

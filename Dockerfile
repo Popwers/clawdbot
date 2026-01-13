@@ -103,10 +103,8 @@ ENV NODE_ENV=production
 RUN set -eux; \
   if [ "$CLAWDBOT_USE_OPENCODE" = "true" ]; then \
     git clone --depth 1 https://github.com/Popwers/dotfiles.git /tmp/dotfiles; \
-    mkdir -p /home/node/.config/opencode/command; \
-    cp -f /tmp/dotfiles/opencode/opencode.json /home/node/.config/opencode/opencode.json; \
-    cp -f /tmp/dotfiles/opencode/oh-my-opencode.json /home/node/.config/opencode/oh-my-opencode.json; \
-    cp -f /tmp/dotfiles/opencode/command/supermemory-init.md /home/node/.config/opencode/command/supermemory-init.md; \
+    mkdir -p /home/node/.config; \
+    cp -a /tmp/dotfiles/opencode /home/node/.config/opencode; \
     rm -rf /tmp/dotfiles; \
     chown -R 1000:1000 /home/node/.config/opencode; \
   fi

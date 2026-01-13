@@ -35,6 +35,11 @@ export CLAWDBOT_DOCKER_APT_PACKAGES="${CLAWDBOT_DOCKER_APT_PACKAGES:-bash ca-cer
 export CLAWDBOT_USE_OPENCODE="${CLAWDBOT_USE_OPENCODE:-false}"
 export CLAWDBOT_WHISPER_PRELOAD="${CLAWDBOT_WHISPER_PRELOAD:-true}"
 export CLAWDBOT_WHISPER_MODEL="${CLAWDBOT_WHISPER_MODEL:-base}"
+export CLAWDBOT_WHISPER_LANGUAGE="${CLAWDBOT_WHISPER_LANGUAGE:-fr}"
+
+# Make compose project name stable to avoid "volume was created for project X" warnings in CI/CD systems
+# that run compose from changing working directories (e.g. Coolify artifacts).
+export COMPOSE_PROJECT_NAME="${CLAWDBOT_COMPOSE_PROJECT_NAME:-clawdbot}"
 
 if [[ -z "${CLAWDBOT_GATEWAY_TOKEN:-}" ]]; then
   if command -v openssl >/dev/null 2>&1; then
@@ -171,7 +176,9 @@ upsert_env "$ENV_FILE" \
   CLAWDBOT_DOCKER_APT_PACKAGES \
   CLAWDBOT_USE_OPENCODE \
   CLAWDBOT_WHISPER_PRELOAD \
-  CLAWDBOT_WHISPER_MODEL
+  CLAWDBOT_WHISPER_MODEL \
+  CLAWDBOT_WHISPER_LANGUAGE \
+  CLAWDBOT_COMPOSE_PROJECT_NAME
 
 echo "==> Building Docker image: $IMAGE_NAME"
 docker build \

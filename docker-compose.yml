@@ -14,12 +14,13 @@ services:
       CLAWDBOT_USE_OPENCODE: ${CLAWDBOT_USE_OPENCODE:-false}
       CLAWDBOT_WHISPER_PRELOAD: ${CLAWDBOT_WHISPER_PRELOAD:-true}
       CLAWDBOT_WHISPER_MODEL: ${CLAWDBOT_WHISPER_MODEL:-base}
+      CLAWDBOT_WHISPER_LANGUAGE: ${CLAWDBOT_WHISPER_LANGUAGE:-fr}
       XDG_CACHE_HOME: /opt/whisper-cache
     volumes:
       - ${CLAWDBOT_CONFIG_DIR}:/home/node/.clawdbot
       - ${CLAWDBOT_WORKSPACE_DIR}:/home/node/clawd
       - ${CLAWDBOT_USER_CONFIG_DIR}:/home/node/.config
-      - clawdbot-whisper-cache:/opt/whisper-cache
+      - ${CLAWDBOT_WHISPER_CACHE_VOLUME:-clawdbot-whisper-cache}:/opt/whisper-cache
     ports:
       - "${CLAWDBOT_GATEWAY_PORT:-18789}:18789"
       - "${CLAWDBOT_BRIDGE_PORT:-18790}:18790"
@@ -54,6 +55,3 @@ services:
   #  tty: true
   #   init: true
   #  entrypoint: ["node", "dist/index.js"]
-
-volumes:
-  clawdbot-whisper-cache:

@@ -11,8 +11,9 @@ set -euo pipefail
 # - whisper --task translate ... (ignored for now; whisper.cpp supports it but
 #   this wrapper keeps output stable for Clawdbot)
 
-model="base"
-language=""
+model="${CLAWDBOT_WHISPER_MODEL:-base}"
+# Default to French so WhatsApp voice notes work out-of-the-box.
+language="${CLAWDBOT_WHISPER_LANGUAGE:-fr}"
 audio=""
 
 args=("$@")

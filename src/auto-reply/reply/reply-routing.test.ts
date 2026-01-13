@@ -40,6 +40,20 @@ describe("createReplyDispatcher", () => {
     expect(onHeartbeatStrip).toHaveBeenCalledTimes(2);
   });
 
+  it("does not add an extra space when responsePrefix ends with whitespace", async () => {
+    const deliver = vi.fn().mockResolvedValue(undefined);
+    const dispatcher = createReplyDispatcher({
+      deliver,
+      responsePrefix: "PFX\n\n",
+    });
+
+    expect(dispatcher.sendFinalReply({ text: "hello" })).toBe(true);
+    await dispatcher.waitForIdle();
+
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(deliver.mock.calls[0][0].text).toBe("PFX\n\nhello");
+  });
+
   it("avoids double-prefixing and keeps media when heartbeat is the only text", async () => {
     const deliver = vi.fn().mockResolvedValue(undefined);
     const dispatcher = createReplyDispatcher({

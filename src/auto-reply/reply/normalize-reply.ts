@@ -59,7 +59,8 @@ export function normalizeReplyPayload(
     text.trim() !== HEARTBEAT_TOKEN &&
     !text.startsWith(effectivePrefix)
   ) {
-    text = `${effectivePrefix} ${text}`;
+    const separator = /\s$/.test(effectivePrefix) ? "" : " ";
+    text = `${effectivePrefix}${separator}${text}`;
   }
 
   return { ...payload, text };

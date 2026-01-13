@@ -42,7 +42,7 @@ preload_whisper() {
   fi
 
   if [[ ! -f "$model_path" ]]; then
-    echo "[clawdbot] whisper.cpp: preload failed (will try on first use)" >&2
+    echo "[clawdbot] whisper.cpp: preload failed (will download on demand when transcription runs)" >&2
     return 0
   fi
 

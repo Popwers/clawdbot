@@ -61,10 +61,41 @@ model_dir="${cache_home%/}/whisper.cpp"
 model_file="ggml-${model}.bin"
 model_path="$model_dir/$model_file"
 
+download_model() {
+  mkdir -p "$model_dir"
+
+  # Prevent concurrent downloads (multiple messages / multiple workers).
+  local lock_dir="$model_dir/.download.lock"
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    sleep 0.2
+  done
+  trap 'rmdir "$lock_dir" 2>/dev/null || true' RETURN
+
+  if [[ -f "$model_path" ]]; then
+    return 0
+  fi
+
+  local url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${model_file}"
+  echo "[clawdbot] whisper.cpp: downloading model '${model}'" >&2
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "$model_path" "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$model_path" "$url"
+  else
+    echo "[clawdbot] whisper.cpp: missing curl/wget; cannot download model" >&2
+    return 1
+  fi
+
+  chmod a+r "$model_path" 2>/dev/null || true
+}
+
 if [[ ! -f "$model_path" ]]; then
-  echo "[clawdbot] whisper: missing model $model_path" >&2
-  echo "[clawdbot] whisper: set CLAWDBOT_WHISPER_MODEL or enable preload" >&2
-  exit 1
+  echo "[clawdbot] whisper.cpp: model missing (${model_file}); downloading on demand" >&2
+  if ! download_model; then
+    echo "[clawdbot] whisper.cpp: download failed; set CLAWDBOT_WHISPER_MODEL or enable preload" >&2
+    exit 1
+  fi
 fi
 
 tmp_dir="$(mktemp -d)"

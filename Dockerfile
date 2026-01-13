@@ -100,13 +100,18 @@ RUN pnpm ui:build
 ENV NODE_ENV=production
 
 # OpenCode default config (from Popwers/dotfiles)
+# Note: /home/node/.config is often a persistent mount (Coolify), so we also stage
+# a default config in the image and sync it at container start (entrypoint).
 RUN set -eux; \
   if [ "$CLAWDBOT_USE_OPENCODE" = "true" ]; then \
     git clone --depth 1 https://github.com/Popwers/dotfiles.git /tmp/dotfiles; \
-    mkdir -p /home/node/.config; \
-    cp -a /tmp/dotfiles/opencode /home/node/.config/opencode; \
+    rm -rf /opt/default-opencode; \
+    cp -a /tmp/dotfiles/opencode /opt/default-opencode; \
     rm -rf /tmp/dotfiles; \
-    chown -R 1000:1000 /home/node/.config/opencode; \
+    chmod -R a+rX /opt/default-opencode; \
   fi
+
+COPY scripts/docker/entrypoint.sh /usr/local/bin/clawdbot-entrypoint
+ENTRYPOINT ["/usr/local/bin/clawdbot-entrypoint"]
 
 CMD ["node", "dist/index.js"]

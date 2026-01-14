@@ -20,7 +20,8 @@ export type AuthChoiceGroupId =
   | "moonshot"
   | "zai"
   | "opencode-zen"
-  | "minimax";
+  | "minimax"
+  | "synthetic";
 
 export type AuthChoiceGroup = {
   value: AuthChoiceGroupId;
@@ -46,6 +47,18 @@ const AUTH_CHOICE_GROUP_DEFS: {
     label: "Anthropic",
     hint: "Claude CLI + API key",
     choices: ["claude-cli", "setup-token", "token", "apiKey"],
+  },
+  {
+    value: "minimax",
+    label: "MiniMax",
+    hint: "M2.1 (recommended)",
+    choices: ["minimax-api", "minimax-api-lightning"],
+  },
+  {
+    value: "synthetic",
+    label: "Synthetic",
+    hint: "Anthropic-compatible (multi-model)",
+    choices: ["synthetic-api-key"],
   },
   {
     value: "google",
@@ -76,12 +89,6 @@ const AUTH_CHOICE_GROUP_DEFS: {
     label: "OpenCode Zen",
     hint: "API key",
     choices: ["opencode-zen"],
-  },
-  {
-    value: "minimax",
-    label: "MiniMax",
-    hint: "M2.1 (recommended)",
-    choices: ["minimax-api"],
   },
 ];
 
@@ -164,12 +171,19 @@ export function buildAuthChoiceOptions(params: {
     value: "openai-codex",
     label: "OpenAI Codex (ChatGPT OAuth)",
   });
+  options.push({ value: "chutes", label: "Chutes (OAuth)" });
   options.push({ value: "openai-api-key", label: "OpenAI API key" });
   options.push({ value: "openrouter-api-key", label: "OpenRouter API key" });
   options.push({ value: "moonshot-api-key", label: "Moonshot AI API key" });
+  options.push({ value: "synthetic-api-key", label: "Synthetic API key" });
   options.push({
     value: "antigravity",
     label: "Google Antigravity (Claude Opus 4.5, Gemini 3, etc.)",
+  });
+  options.push({
+    value: "github-copilot",
+    label: "GitHub Copilot (GitHub device login)",
+    hint: "Uses GitHub device flow",
   });
   options.push({ value: "gemini-api-key", label: "Google Gemini API key" });
   options.push({ value: "zai-api-key", label: "Z.AI (GLM 4.7) API key" });
@@ -181,6 +195,11 @@ export function buildAuthChoiceOptions(params: {
     hint: "Claude, GPT, Gemini via opencode.ai/zen",
   });
   options.push({ value: "minimax-api", label: "MiniMax M2.1" });
+  options.push({
+    value: "minimax-api-lightning",
+    label: "MiniMax M2.1 Lightning",
+    hint: "Faster, higher output cost",
+  });
   if (params.includeSkip) {
     options.push({ value: "skip", label: "Skip for now" });
   }

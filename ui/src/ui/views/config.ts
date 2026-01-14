@@ -1,4 +1,12 @@
 import { html, nothing } from "lit";
+import {
+  MOONSHOT_KIMI_K2_CONTEXT_WINDOW,
+  MOONSHOT_KIMI_K2_COST,
+  MOONSHOT_KIMI_K2_DEFAULT_ID,
+  MOONSHOT_KIMI_K2_INPUT,
+  MOONSHOT_KIMI_K2_MAX_TOKENS,
+  MOONSHOT_KIMI_K2_MODELS,
+} from "../data/moonshot-kimi-k2";
 import type { ConfigUiHints } from "../types";
 import { analyzeConfigSchema, renderConfigForm } from "./config-form";
 
@@ -265,25 +273,27 @@ function buildModelPresetPatches(base: Record<string, unknown>): Array<{
       value: "openai-completions",
     });
   }
+  const moonshotModelDefinitions = MOONSHOT_KIMI_K2_MODELS.map((model) => ({
+    id: model.id,
+    name: model.name,
+    reasoning: model.reasoning,
+    input: [...MOONSHOT_KIMI_K2_INPUT],
+    cost: { ...MOONSHOT_KIMI_K2_COST },
+    contextWindow: MOONSHOT_KIMI_K2_CONTEXT_WINDOW,
+    maxTokens: MOONSHOT_KIMI_K2_MAX_TOKENS,
+  }));
+
   if (!moonshotHasModels) {
     moonshot.push({
       path: moonshotModelsPath as Array<string | number>,
-      value: [
-        {
-          id: "kimi-k2-0905-preview",
-          name: "Kimi K2 0905 Preview",
-          reasoning: false,
-          input: ["text"],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: 256000,
-          maxTokens: 8192,
-        },
-      ],
+      value: moonshotModelDefinitions,
     });
   }
-  moonshot.push(setPrimary("moonshot/kimi-k2-0905-preview"));
-  const moonshotAlias = safeAlias("moonshot/kimi-k2-0905-preview", "Kimi K2");
-  if (moonshotAlias) moonshot.push(moonshotAlias);
+  moonshot.push(setPrimary(`moonshot/${MOONSHOT_KIMI_K2_DEFAULT_ID}`));
+  for (const model of MOONSHOT_KIMI_K2_MODELS) {
+    const moonshotAlias = safeAlias(`moonshot/${model.id}`, model.alias);
+    if (moonshotAlias) moonshot.push(moonshotAlias);
+  }
 
   return [
     {
@@ -302,7 +312,8 @@ function buildModelPresetPatches(base: Record<string, unknown>): Array<{
     {
       id: "moonshot",
       title: "Kimi (Moonshot)",
-      description: "Adds Moonshot provider config + sets default model to kimi-k2-0905-preview.",
+      description:
+        "Adds Moonshot provider config + sets default model to kimi-k2-0905-preview (includes Kimi K2 turbo/thinking variants).",
       patches: moonshot,
     },
   ];

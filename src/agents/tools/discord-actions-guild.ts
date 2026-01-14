@@ -31,6 +31,7 @@ import {
 function readParentIdParam(
   params: Record<string, unknown>,
 ): string | null | undefined {
+  if (params.clearParent === true) return null;
   if (params.parentId === null) return null;
   return readStringParam(params, "parentId");
 }
@@ -263,7 +264,7 @@ export async function handleDiscordGuildAction(
         name: name ?? undefined,
         topic: topic ?? undefined,
         position: position ?? undefined,
-        parentId: parentId === undefined ? undefined : parentId,
+        parentId,
         nsfw,
         rateLimitPerUser: rateLimitPerUser ?? undefined,
       });
@@ -292,7 +293,7 @@ export async function handleDiscordGuildAction(
       await moveChannelDiscord({
         guildId,
         channelId,
-        parentId: parentId === undefined ? undefined : parentId,
+        parentId,
         position: position ?? undefined,
       });
       return jsonResult({ ok: true });

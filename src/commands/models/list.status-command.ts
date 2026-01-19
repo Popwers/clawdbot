@@ -11,25 +11,21 @@ import {
   resolveProfileUnusableUntilForDisplay,
 } from "../../agents/auth-profiles.js";
 import { resolveEnvApiKey } from "../../agents/model-auth.js";
-import {
-  parseModelRef,
-  resolveConfiguredModelRef,
-} from "../../agents/model-selection.js";
+import { parseModelRef, resolveConfiguredModelRef } from "../../agents/model-selection.js";
 import { CONFIG_PATH_CLAWDBOT, loadConfig } from "../../config/config.js";
+import { getShellEnvAppliedKeys, shouldEnableShellEnvFallback } from "../../infra/shell-env.js";
 import {
-  getShellEnvAppliedKeys,
-  shouldEnableShellEnvFallback,
-} from "../../infra/shell-env.js";
+  formatUsageWindowSummary,
+  loadProviderUsageSummary,
+  resolveUsageProviderId,
+  type UsageProviderId,
+} from "../../infra/provider-usage.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import { colorize, theme } from "../../terminal/theme.js";
 import { shortenHomePath } from "../../utils.js";
 import { resolveProviderAuthOverview } from "./list.auth-overview.js";
 import { isRich } from "./list.format.js";
-import {
-  DEFAULT_MODEL,
-  DEFAULT_PROVIDER,
-  ensureFlagCompatibility,
-} from "./shared.js";
+import { DEFAULT_MODEL, DEFAULT_PROVIDER, ensureFlagCompatibility } from "./shared.js";
 
 export async function modelsStatusCommand(
   opts: { json?: boolean; plain?: boolean; check?: boolean },
@@ -52,26 +48,21 @@ export async function modelsStatusCommand(
     | string
     | undefined;
   const rawModel =
-    typeof modelConfig === "string"
-      ? modelConfig.trim()
-      : (modelConfig?.primary?.trim() ?? "");
+    typeof modelConfig === "string" ? modelConfig.trim() : (modelConfig?.primary?.trim() ?? "");
   const resolvedLabel = `${resolved.provider}/${resolved.model}`;
   const defaultLabel = rawModel || resolvedLabel;
-  const fallbacks =
-    typeof modelConfig === "object" ? (modelConfig?.fallbacks ?? []) : [];
+  const fallbacks = typeof modelConfig === "object" ? (modelConfig?.fallbacks ?? []) : [];
   const imageModel =
-    typeof imageConfig === "string"
-      ? imageConfig.trim()
-      : (imageConfig?.primary?.trim() ?? "");
-  const imageFallbacks =
-    typeof imageConfig === "object" ? (imageConfig?.fallbacks ?? []) : [];
-  const aliases = Object.entries(cfg.agents?.defaults?.models ?? {}).reduce<
-    Record<string, string>
-  >((acc, [key, entry]) => {
-    const alias = entry?.alias?.trim();
-    if (alias) acc[alias] = key;
-    return acc;
-  }, {});
+    typeof imageConfig === "string" ? imageConfig.trim() : (imageConfig?.primary?.trim() ?? "");
+  const imageFallbacks = typeof imageConfig === "object" ? (imageConfig?.fallbacks ?? []) : [];
+  const aliases = Object.entries(cfg.agents?.defaults?.models ?? {}).reduce<Record<string, string>>(
+    (acc, [key, entry]) => {
+      const alias = entry?.alias?.trim();
+      if (alias) acc[alias] = key;
+      return acc;
+    },
+    {},
+  );
   const allowed = Object.keys(cfg.agents?.defaults?.models ?? {});
 
   const agentDir = resolveClawdbotAgentDir();
@@ -90,22 +81,11 @@ export async function modelsStatusCommand(
   );
   const providersFromModels = new Set<string>();
   const providersInUse = new Set<string>();
-  for (const raw of [
-    defaultLabel,
-    ...fallbacks,
-    imageModel,
-    ...imageFallbacks,
-    ...allowed,
-  ]) {
+  for (const raw of [defaultLabel, ...fallbacks, imageModel, ...imageFallbacks, ...allowed]) {
     const parsed = parseModelRef(String(raw ?? ""), DEFAULT_PROVIDER);
     if (parsed?.provider) providersFromModels.add(parsed.provider);
   }
-  for (const raw of [
-    defaultLabel,
-    ...fallbacks,
-    imageModel,
-    ...imageFallbacks,
-  ]) {
+  for (const raw of [defaultLabel, ...fallbacks, imageModel, ...imageFallbacks]) {
     const parsed = parseModelRef(String(raw ?? ""), DEFAULT_PROVIDER);
     if (parsed?.provider) providersInUse.add(parsed.provider);
   }
@@ -145,23 +125,15 @@ export async function modelsStatusCommand(
 
   const applied = getShellEnvAppliedKeys();
   const shellFallbackEnabled =
-    shouldEnableShellEnvFallback(process.env) ||
-    cfg.env?.shellEnv?.enabled === true;
+    shouldEnableShellEnvFallback(process.env) || cfg.env?.shellEnv?.enabled === true;
 
   const providerAuth = providers
-    .map((provider) =>
-      resolveProviderAuthOverview({ provider, cfg, store, modelsPath }),
-    )
+    .map((provider) => resolveProviderAuthOverview({ provider, cfg, store, modelsPath }))
     .filter((entry) => {
-      const hasAny =
-        entry.profiles.count > 0 ||
-        Boolean(entry.env) ||
-        Boolean(entry.modelsJson);
+      const hasAny = entry.profiles.count > 0 || Boolean(entry.env) || Boolean(entry.modelsJson);
       return hasAny;
     });
-  const providerAuthMap = new Map(
-    providerAuth.map((entry) => [entry.provider, entry]),
-  );
+  const providerAuthMap = new Map(providerAuth.map((entry) => [entry.provider, entry]));
   const missingProvidersInUse = Array.from(providersInUse)
     .filter((provider) => !providerAuthMap.has(provider))
     .sort((a, b) => a.localeCompare(b));
@@ -169,15 +141,11 @@ export async function modelsStatusCommand(
   const providersWithOauth = providerAuth
     .filter(
       (entry) =>
-        entry.profiles.oauth > 0 ||
-        entry.profiles.token > 0 ||
-        entry.env?.value === "OAuth (env)",
+        entry.profiles.oauth > 0 || entry.profiles.token > 0 || entry.env?.value === "OAuth (env)",
     )
     .map((entry) => {
       const count =
-        entry.profiles.oauth +
-        entry.profiles.token +
-        (entry.env?.value === "OAuth (env)" ? 1 : 0);
+        entry.profiles.oauth + entry.profiles.token + (entry.env?.value === "OAuth (env)" ? 1 : 0);
       return `${entry.provider} (${count})`;
     });
 
@@ -202,10 +170,7 @@ export async function modelsStatusCommand(
       remainingMs: number;
     }> = [];
     for (const profileId of Object.keys(store.usageStats ?? {})) {
-      const unusableUntil = resolveProfileUnusableUntilForDisplay(
-        store,
-        profileId,
-      );
+      const unusableUntil = resolveProfileUnusableUntilForDisplay(store, profileId);
       if (!unusableUntil || now >= unusableUntil) continue;
       const stats = store.usageStats?.[profileId];
       const kind =
@@ -226,12 +191,9 @@ export async function modelsStatusCommand(
 
   const checkStatus = (() => {
     const hasExpiredOrMissing =
-      oauthProfiles.some((profile) =>
-        ["expired", "missing"].includes(profile.status),
-      ) || missingProvidersInUse.length > 0;
-    const hasExpiring = oauthProfiles.some(
-      (profile) => profile.status === "expiring",
-    );
+      oauthProfiles.some((profile) => ["expired", "missing"].includes(profile.status)) ||
+      missingProvidersInUse.length > 0;
+    const hasExpiring = oauthProfiles.some((profile) => profile.status === "expiring");
     if (hasExpiredOrMissing) return 1;
     if (hasExpiring) return 2;
     return 0;
@@ -282,12 +244,9 @@ export async function modelsStatusCommand(
   }
 
   const rich = isRich(opts);
-  const label = (value: string) =>
-    colorize(rich, theme.accent, value.padEnd(14));
+  const label = (value: string) => colorize(rich, theme.accent, value.padEnd(14));
   const displayDefault =
-    rawModel && rawModel !== resolvedLabel
-      ? `${resolvedLabel} (from ${rawModel})`
-      : resolvedLabel;
+    rawModel && rawModel !== resolvedLabel ? `${resolvedLabel} (from ${rawModel})` : resolvedLabel;
 
   runtime.log(
     `${label("Config")}${colorize(rich, theme.muted, ":")} ${colorize(rich, theme.info, CONFIG_PATH_CLAWDBOT)}`,
@@ -368,11 +327,7 @@ export async function modelsStatusCommand(
       rich,
       shellFallbackEnabled ? theme.success : theme.muted,
       shellFallbackEnabled ? "on" : "off",
-    )}${
-      applied.length
-        ? colorize(rich, theme.muted, ` (applied: ${applied.join(", ")})`)
-        : ""
-    }`,
+    )}${applied.length ? colorize(rich, theme.muted, ` (applied: ${applied.join(", ")})`) : ""}`,
   );
   runtime.log(
     `${label(`Providers w/ OAuth/tokens (${providersWithOauth.length || 0})`)}${colorize(
@@ -453,6 +408,36 @@ export async function modelsStatusCommand(
     return;
   }
 
+  const usageByProvider = new Map<string, string>();
+  const usageProviders = Array.from(
+    new Set(
+      oauthProfiles
+        .map((profile) => resolveUsageProviderId(profile.provider))
+        .filter((provider): provider is UsageProviderId => Boolean(provider)),
+    ),
+  );
+  if (usageProviders.length > 0) {
+    try {
+      const usageSummary = await loadProviderUsageSummary({
+        providers: usageProviders,
+        agentDir,
+        timeoutMs: 3500,
+      });
+      for (const snapshot of usageSummary.providers) {
+        const formatted = formatUsageWindowSummary(snapshot, {
+          now: Date.now(),
+          maxWindows: 2,
+          includeResets: true,
+        });
+        if (formatted) {
+          usageByProvider.set(snapshot.provider, formatted);
+        }
+      }
+    } catch {
+      // ignore usage failures
+    }
+  }
+
   const formatStatus = (status: string) => {
     if (status === "ok") return colorize(rich, theme.success, "ok");
     if (status === "static") return colorize(rich, theme.muted, "static");
@@ -461,21 +446,32 @@ export async function modelsStatusCommand(
     return colorize(rich, theme.error, "expired");
   };
 
+  const profilesByProvider = new Map<string, typeof oauthProfiles>();
   for (const profile of oauthProfiles) {
-    const labelText = profile.label || profile.profileId;
-    const label = colorize(rich, theme.accent, labelText);
-    const status = formatStatus(profile.status);
-    const expiry =
-      profile.status === "static"
-        ? ""
-        : profile.expiresAt
-          ? ` expires in ${formatRemainingShort(profile.remainingMs)}`
-          : " expires unknown";
-    const source =
-      profile.source !== "store"
-        ? colorize(rich, theme.muted, ` (${profile.source})`)
-        : "";
-    runtime.log(`- ${label} ${status}${expiry}${source}`);
+    const current = profilesByProvider.get(profile.provider);
+    if (current) current.push(profile);
+    else profilesByProvider.set(profile.provider, [profile]);
+  }
+
+  for (const [provider, profiles] of profilesByProvider) {
+    const usageKey = resolveUsageProviderId(provider);
+    const usage = usageKey ? usageByProvider.get(usageKey) : undefined;
+    const usageSuffix = usage ? colorize(rich, theme.muted, ` usage: ${usage}`) : "";
+    runtime.log(`- ${colorize(rich, theme.heading, provider)}${usageSuffix}`);
+    for (const profile of profiles) {
+      const labelText = profile.label || profile.profileId;
+      const label = colorize(rich, theme.accent, labelText);
+      const status = formatStatus(profile.status);
+      const expiry =
+        profile.status === "static"
+          ? ""
+          : profile.expiresAt
+            ? ` expires in ${formatRemainingShort(profile.remainingMs)}`
+            : " expires unknown";
+      const source =
+        profile.source !== "store" ? colorize(rich, theme.muted, ` (${profile.source})`) : "";
+      runtime.log(`  - ${label} ${status}${expiry}${source}`);
+    }
   }
 
   if (opts.check) runtime.exit(checkStatus);

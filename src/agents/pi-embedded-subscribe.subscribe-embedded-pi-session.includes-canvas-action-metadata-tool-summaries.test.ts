@@ -13,7 +13,7 @@ describe("subscribeEmbeddedPiSession", () => {
     { tag: "antthinking", open: "<antthinking>", close: "</antthinking>" },
   ] as const;
 
-  it("includes canvas action metadata in tool summaries", () => {
+  it("includes canvas action metadata in tool summaries", async () => {
     let handler: ((evt: unknown) => void) | undefined;
     const session: StubSession = {
       subscribe: (fn) => {
@@ -25,9 +25,7 @@ describe("subscribeEmbeddedPiSession", () => {
     const onToolResult = vi.fn();
 
     subscribeEmbeddedPiSession({
-      session: session as unknown as Parameters<
-        typeof subscribeEmbeddedPiSession
-      >[0]["session"],
+      session: session as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"],
       runId: "run-canvas-tool",
       verboseLevel: "on",
       onToolResult,
@@ -39,6 +37,9 @@ describe("subscribeEmbeddedPiSession", () => {
       toolCallId: "tool-canvas-1",
       args: { action: "a2ui_push", jsonlPath: "/tmp/a2ui.jsonl" },
     });
+
+    // Wait for async handler to complete
+    await Promise.resolve();
 
     expect(onToolResult).toHaveBeenCalledTimes(1);
     const payload = onToolResult.mock.calls[0][0];
@@ -59,9 +60,7 @@ describe("subscribeEmbeddedPiSession", () => {
     const onToolResult = vi.fn();
 
     subscribeEmbeddedPiSession({
-      session: session as unknown as Parameters<
-        typeof subscribeEmbeddedPiSession
-      >[0]["session"],
+      session: session as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"],
       runId: "run-tool-off",
       shouldEmitToolResult: () => false,
       onToolResult,
@@ -76,7 +75,7 @@ describe("subscribeEmbeddedPiSession", () => {
 
     expect(onToolResult).not.toHaveBeenCalled();
   });
-  it("emits tool summaries when shouldEmitToolResult overrides verbose", () => {
+  it("emits tool summaries when shouldEmitToolResult overrides verbose", async () => {
     let handler: ((evt: unknown) => void) | undefined;
     const session: StubSession = {
       subscribe: (fn) => {
@@ -88,9 +87,7 @@ describe("subscribeEmbeddedPiSession", () => {
     const onToolResult = vi.fn();
 
     subscribeEmbeddedPiSession({
-      session: session as unknown as Parameters<
-        typeof subscribeEmbeddedPiSession
-      >[0]["session"],
+      session: session as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"],
       runId: "run-tool-override",
       verboseLevel: "off",
       shouldEmitToolResult: () => true,
@@ -103,6 +100,9 @@ describe("subscribeEmbeddedPiSession", () => {
       toolCallId: "tool-3",
       args: { path: "/tmp/c.txt" },
     });
+
+    // Wait for async handler to complete
+    await Promise.resolve();
 
     expect(onToolResult).toHaveBeenCalledTimes(1);
   });

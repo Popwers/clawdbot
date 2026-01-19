@@ -1,6 +1,9 @@
+import type { NormalizedChatType } from "../channels/chat-type.js";
 import type { SessionEntry } from "../config/sessions.js";
+import type { DeliveryContext } from "../utils/delivery-context.js";
 
 export type GatewaySessionsDefaults = {
+  modelProvider: string | null;
   model: string | null;
   contextTokens: number | null;
 };
@@ -12,9 +15,10 @@ export type GatewaySessionRow = {
   displayName?: string;
   channel?: string;
   subject?: string;
-  room?: string;
+  groupChannel?: string;
   space?: string;
-  chatType?: "direct" | "group" | "room";
+  chatType?: NormalizedChatType;
+  origin?: SessionEntry["origin"];
   updatedAt: number | null;
   sessionId?: string;
   systemSent?: boolean;
@@ -27,10 +31,11 @@ export type GatewaySessionRow = {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
-  responseUsage?: "on" | "off";
+  responseUsage?: "on" | "off" | "tokens" | "full";
   modelProvider?: string;
   model?: string;
   contextTokens?: number;
+  deliveryContext?: DeliveryContext;
   lastChannel?: SessionEntry["lastChannel"];
   lastTo?: string;
   lastAccountId?: string;

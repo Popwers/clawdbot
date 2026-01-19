@@ -8,15 +8,14 @@ import {
   rpcReq,
   startServerWithClient,
   testState,
+  writeSessionStore,
 } from "./test-helpers.js";
 
 installGatewayTestHooks();
 
 describe("gateway server sessions", () => {
   test("filters sessions by agentId", async () => {
-    const dir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "clawdbot-sessions-agents-"),
-    );
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdbot-sessions-agents-"));
     testState.sessionConfig = {
       store: path.join(dir, "{agentId}", "sessions.json"),
     };
@@ -27,38 +26,30 @@ describe("gateway server sessions", () => {
     const workDir = path.join(dir, "work");
     await fs.mkdir(homeDir, { recursive: true });
     await fs.mkdir(workDir, { recursive: true });
-    await fs.writeFile(
-      path.join(homeDir, "sessions.json"),
-      JSON.stringify(
-        {
-          "agent:home:main": {
-            sessionId: "sess-home-main",
-            updatedAt: Date.now(),
-          },
-          "agent:home:discord:group:dev": {
-            sessionId: "sess-home-group",
-            updatedAt: Date.now() - 1000,
-          },
+    await writeSessionStore({
+      storePath: path.join(homeDir, "sessions.json"),
+      agentId: "home",
+      entries: {
+        main: {
+          sessionId: "sess-home-main",
+          updatedAt: Date.now(),
         },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-    await fs.writeFile(
-      path.join(workDir, "sessions.json"),
-      JSON.stringify(
-        {
-          "agent:work:main": {
-            sessionId: "sess-work-main",
-            updatedAt: Date.now(),
-          },
+        "discord:group:dev": {
+          sessionId: "sess-home-group",
+          updatedAt: Date.now() - 1000,
         },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
+      },
+    });
+    await writeSessionStore({
+      storePath: path.join(workDir, "sessions.json"),
+      agentId: "work",
+      entries: {
+        main: {
+          sessionId: "sess-work-main",
+          updatedAt: Date.now(),
+        },
+      },
+    });
 
     const { ws } = await startServerWithClient();
     await connectOk(ws);
@@ -84,9 +75,7 @@ describe("gateway server sessions", () => {
       agentId: "work",
     });
     expect(workSessions.ok).toBe(true);
-    expect(workSessions.payload?.sessions.map((s) => s.key)).toEqual([
-      "agent:work:main",
-    ]);
+    expect(workSessions.payload?.sessions.map((s) => s.key)).toEqual(["agent:work:main"]);
   });
 
   test("resolves and patches main alias to default agent main key", async () => {
@@ -96,36 +85,30 @@ describe("gateway server sessions", () => {
     testState.agentsConfig = { list: [{ id: "ops", default: true }] };
     testState.sessionConfig = { mainKey: "work" };
 
-    await fs.writeFile(
+    await writeSessionStore({
       storePath,
-      JSON.stringify(
-        {
-          "agent:ops:work": {
-            sessionId: "sess-ops-main",
-            updatedAt: Date.now(),
-          },
+      agentId: "ops",
+      mainKey: "work",
+      entries: {
+        main: {
+          sessionId: "sess-ops-main",
+          updatedAt: Date.now(),
         },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
+      },
+    });
 
     const { ws } = await startServerWithClient();
     await connectOk(ws);
-    const resolved = await rpcReq<{ ok: true; key: string }>(
-      ws,
-      "sessions.resolve",
-      { key: "main" },
-    );
+    const resolved = await rpcReq<{ ok: true; key: string }>(ws, "sessions.resolve", {
+      key: "main",
+    });
     expect(resolved.ok).toBe(true);
     expect(resolved.payload?.key).toBe("agent:ops:work");
 
-    const patched = await rpcReq<{ ok: true; key: string }>(
-      ws,
-      "sessions.patch",
-      { key: "main", thinkingLevel: "medium" },
-    );
+    const patched = await rpcReq<{ ok: true; key: string }>(ws, "sessions.patch", {
+      key: "main",
+      thinkingLevel: "medium",
+    });
     expect(patched.ok).toBe(true);
     expect(patched.payload?.key).toBe("agent:ops:work");
 

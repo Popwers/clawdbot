@@ -14,24 +14,21 @@ import {
   formatControlUiSshHint,
   openUrl,
   probeGatewayReachable,
+  waitForGatewayReachable,
   resolveControlUiLinks,
 } from "../commands/onboard-helpers.js";
 import type { OnboardOptions } from "../commands/onboard-types.js";
 import type { ClawdbotConfig } from "../config/config.js";
-import { resolveGatewayLaunchAgentLabel } from "../daemon/constants.js";
-import { resolveGatewayProgramArguments } from "../daemon/program-args.js";
-import {
-  renderSystemNodeWarning,
-  resolvePreferredNodePath,
-  resolveSystemNodeInfo,
-} from "../daemon/runtime-paths.js";
 import { resolveGatewayService } from "../daemon/service.js";
-import { buildServiceEnvironment } from "../daemon/service-env.js";
 import { isSystemdUserServiceAvailable } from "../daemon/systemd.js";
 import { ensureControlUiAssetsBuilt } from "../infra/control-ui-assets.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { runTui } from "../tui/tui.js";
-import { resolveUserPath, sleep } from "../utils.js";
+import { resolveUserPath } from "../utils.js";
+import {
+  buildGatewayInstallPlan,
+  gatewayInstallErrorHint,
+} from "../commands/daemon-install-helpers.js";
 import type { GatewayWizardSettings, WizardFlow } from "./onboarding.types.js";
 import type { WizardPrompter } from "./prompts.js";
 
@@ -46,11 +43,21 @@ type FinalizeOnboardingOptions = {
   runtime: RuntimeEnv;
 };
 
-export async function finalizeOnboardingWizard(
-  options: FinalizeOnboardingOptions,
-) {
-  const { flow, opts, baseConfig, nextConfig, settings, prompter, runtime } =
-    options;
+export async function finalizeOnboardingWizard(options: FinalizeOnboardingOptions) {
+  const { flow, opts, baseConfig, nextConfig, settings, prompter, runtime } = options;
+
+  const withWizardProgress = async <T>(
+    label: string,
+    options: { doneMessage?: string },
+    work: (progress: { update: (message: string) => void }) => Promise<T>,
+  ): Promise<T> => {
+    const progress = prompter.progress(label);
+    try {
+      return await work(progress);
+    } finally {
+      progress.stop(options.doneMessage);
+    }
+  };
 
   const systemdAvailable =
     process.platform === "linux" ? await isSystemdUserServiceAvailable() : true;
@@ -62,9 +69,7 @@ export async function finalizeOnboardingWizard(
   }
 
   if (process.platform === "linux" && systemdAvailable) {
-    const { ensureSystemdUserLingerInteractive } = await import(
-      "../commands/systemd-linger.js"
-    );
+    const { ensureSystemdUserLingerInteractive } = await import("../commands/systemd-linger.js");
     await ensureSystemdUserLingerInteractive({
       runtime,
       prompter: {
@@ -117,10 +122,7 @@ export async function finalizeOnboardingWizard(
       );
     }
     const service = resolveGatewayService();
-    const loaded = await service.isLoaded({
-      env: process.env,
-      profile: process.env.CLAWDBOT_PROFILE,
-    });
+    const loaded = await service.isLoaded({ env: process.env });
     if (loaded) {
       const action = (await prompter.select({
         message: "Gateway service already installed",
@@ -131,67 +133,77 @@ export async function finalizeOnboardingWizard(
         ],
       })) as "restart" | "reinstall" | "skip";
       if (action === "restart") {
-        await service.restart({
-          env: process.env,
-          profile: process.env.CLAWDBOT_PROFILE,
-          stdout: process.stdout,
-        });
+        await withWizardProgress(
+          "Gateway daemon",
+          { doneMessage: "Gateway daemon restarted." },
+          async (progress) => {
+            progress.update("Restarting Gateway daemon…");
+            await service.restart({
+              env: process.env,
+              stdout: process.stdout,
+            });
+          },
+        );
       } else if (action === "reinstall") {
-        await service.uninstall({ env: process.env, stdout: process.stdout });
+        await withWizardProgress(
+          "Gateway daemon",
+          { doneMessage: "Gateway daemon uninstalled." },
+          async (progress) => {
+            progress.update("Uninstalling Gateway daemon…");
+            await service.uninstall({ env: process.env, stdout: process.stdout });
+          },
+        );
       }
     }
 
-    if (
-      !loaded ||
-      (loaded &&
-        (await service.isLoaded({
+    if (!loaded || (loaded && (await service.isLoaded({ env: process.env })) === false)) {
+      const progress = prompter.progress("Gateway daemon");
+      let installError: string | null = null;
+      try {
+        progress.update("Preparing Gateway daemon…");
+        const { programArguments, workingDirectory, environment } = await buildGatewayInstallPlan({
           env: process.env,
-          profile: process.env.CLAWDBOT_PROFILE,
-        })) === false)
-    ) {
-      const devMode =
-        process.argv[1]?.includes(`${path.sep}src${path.sep}`) &&
-        process.argv[1]?.endsWith(".ts");
-      const nodePath = await resolvePreferredNodePath({
-        env: process.env,
-        runtime: daemonRuntime,
-      });
-      const { programArguments, workingDirectory } =
-        await resolveGatewayProgramArguments({
           port: settings.port,
-          dev: devMode,
+          token: settings.gatewayToken,
           runtime: daemonRuntime,
-          nodePath,
+          warn: (message, title) => prompter.note(message, title),
         });
-      if (daemonRuntime === "node") {
-        const systemNode = await resolveSystemNodeInfo({ env: process.env });
-        const warning = renderSystemNodeWarning(
-          systemNode,
-          programArguments[0],
+
+        progress.update("Installing Gateway daemon…");
+        await service.install({
+          env: process.env,
+          stdout: process.stdout,
+          programArguments,
+          workingDirectory,
+          environment,
+        });
+      } catch (err) {
+        installError = err instanceof Error ? err.message : String(err);
+      } finally {
+        progress.stop(
+          installError ? "Gateway daemon install failed." : "Gateway daemon installed.",
         );
-        if (warning) await prompter.note(warning, "Gateway runtime");
       }
-      const environment = buildServiceEnvironment({
-        env: process.env,
-        port: settings.port,
-        token: settings.gatewayToken,
-        launchdLabel:
-          process.platform === "darwin"
-            ? resolveGatewayLaunchAgentLabel(process.env.CLAWDBOT_PROFILE)
-            : undefined,
-      });
-      await service.install({
-        env: process.env,
-        stdout: process.stdout,
-        programArguments,
-        workingDirectory,
-        environment,
-      });
+      if (installError) {
+        await prompter.note(`Gateway daemon install failed: ${installError}`, "Gateway");
+        await prompter.note(gatewayInstallErrorHint(), "Gateway");
+      }
     }
   }
 
   if (!opts.skipHealth) {
-    await sleep(1500);
+    const probeLinks = resolveControlUiLinks({
+      bind: nextConfig.gateway?.bind ?? "loopback",
+      port: settings.port,
+      customBindHost: nextConfig.gateway?.customBindHost,
+      basePath: undefined,
+    });
+    // Daemon install/restart can briefly flap the WS; wait a bit so health check doesn't false-fail.
+    await waitForGatewayReachable({
+      url: probeLinks.wsUrl,
+      token: settings.gatewayToken,
+      deadlineMs: 15_000,
+    });
     try {
       await healthCommand({ json: false, timeoutMs: 10_000 }, runtime);
     } catch (err) {
@@ -208,9 +220,7 @@ export async function finalizeOnboardingWizard(
   }
 
   const controlUiEnabled =
-    nextConfig.gateway?.controlUi?.enabled ??
-    baseConfig.gateway?.controlUi?.enabled ??
-    true;
+    nextConfig.gateway?.controlUi?.enabled ?? baseConfig.gateway?.controlUi?.enabled ?? true;
   if (!opts.skipUi && controlUiEnabled) {
     const controlUiAssets = await ensureControlUiAssetsBuilt(runtime);
     if (!controlUiAssets.ok && controlUiAssets.message) {
@@ -229,8 +239,7 @@ export async function finalizeOnboardingWizard(
   );
 
   const controlUiBasePath =
-    nextConfig.gateway?.controlUi?.basePath ??
-    baseConfig.gateway?.controlUi?.basePath;
+    nextConfig.gateway?.controlUi?.basePath ?? baseConfig.gateway?.controlUi?.basePath;
   const links = resolveControlUiLinks({
     bind: settings.bind,
     port: settings.port,
@@ -245,16 +254,11 @@ export async function finalizeOnboardingWizard(
   const gatewayProbe = await probeGatewayReachable({
     url: links.wsUrl,
     token: settings.authMode === "token" ? settings.gatewayToken : undefined,
-    password:
-      settings.authMode === "password"
-        ? nextConfig.gateway?.auth?.password
-        : "",
+    password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
   });
   const gatewayStatusLine = gatewayProbe.ok
     ? "Gateway: reachable"
-    : `Gateway: not detected${
-        gatewayProbe.detail ? ` (${gatewayProbe.detail})` : ""
-      }`;
+    : `Gateway: not detected${gatewayProbe.detail ? ` (${gatewayProbe.detail})` : ""}`;
   const bootstrapPath = path.join(
     resolveUserPath(options.workspaceDir),
     DEFAULT_BOOTSTRAP_FILENAME,
@@ -295,12 +299,8 @@ export async function finalizeOnboardingWizard(
       if (wantsTui) {
         await runTui({
           url: links.wsUrl,
-          token:
-            settings.authMode === "token" ? settings.gatewayToken : undefined,
-          password:
-            settings.authMode === "password"
-              ? nextConfig.gateway?.auth?.password
-              : "",
+          token: settings.authMode === "token" ? settings.gatewayToken : undefined,
+          password: settings.authMode === "password" ? nextConfig.gateway?.auth?.password : "",
           // Safety: onboarding TUI should not auto-deliver to lastProvider/lastTo.
           deliver: false,
           message: "Wake up, my friend!",
@@ -313,8 +313,7 @@ export async function finalizeOnboardingWizard(
           formatControlUiSshHint({
             port: settings.port,
             basePath: controlUiBasePath,
-            token:
-              settings.authMode === "token" ? settings.gatewayToken : undefined,
+            token: settings.authMode === "token" ? settings.gatewayToken : undefined,
           }),
           "Open Control UI",
         );
@@ -330,10 +329,9 @@ export async function finalizeOnboardingWizard(
   }
 
   await prompter.note(
-    [
-      "Back up your agent workspace.",
-      "Docs: https://docs.clawd.bot/concepts/agent-workspace",
-    ].join("\n"),
+    ["Back up your agent workspace.", "Docs: https://docs.clawd.bot/concepts/agent-workspace"].join(
+      "\n",
+    ),
     "Workspace backup",
   );
 
@@ -343,9 +341,7 @@ export async function finalizeOnboardingWizard(
   );
 
   const shouldOpenControlUi =
-    !opts.skipUi &&
-    settings.authMode === "token" &&
-    Boolean(settings.gatewayToken);
+    !opts.skipUi && settings.authMode === "token" && Boolean(settings.gatewayToken);
   let controlUiOpened = false;
   let controlUiOpenHint: string | undefined;
   if (shouldOpenControlUi) {
@@ -380,6 +376,34 @@ export async function finalizeOnboardingWizard(
       "Dashboard ready",
     );
   }
+
+  const webSearchKey = (nextConfig.tools?.web?.search?.apiKey ?? "").trim();
+  const webSearchEnv = (process.env.BRAVE_API_KEY ?? "").trim();
+  const hasWebSearchKey = Boolean(webSearchKey || webSearchEnv);
+  await prompter.note(
+    hasWebSearchKey
+      ? [
+          "Web search is enabled, so your agent can look things up online when needed.",
+          "",
+          webSearchKey
+            ? "API key: stored in config (tools.web.search.apiKey)."
+            : "API key: provided via BRAVE_API_KEY env var (Gateway environment).",
+          "Docs: https://docs.clawd.bot/tools/web",
+        ].join("\n")
+      : [
+          "If you want your agent to be able to search the web, you’ll need an API key.",
+          "",
+          "Clawdbot uses Brave Search for the `web_search` tool. Without a Brave Search API key, web search won’t work.",
+          "",
+          "Set it up interactively:",
+          "- Run: clawdbot configure --section web",
+          "- Enable web_search and paste your Brave Search API key",
+          "",
+          "Alternative: set BRAVE_API_KEY in the Gateway environment (no config changes).",
+          "Docs: https://docs.clawd.bot/tools/web",
+        ].join("\n"),
+    "Web search (optional)",
+  );
 
   await prompter.outro(
     controlUiOpened

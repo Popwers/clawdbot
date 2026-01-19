@@ -155,7 +155,6 @@ WORKDIR /app
 # Cache dependencies unless package metadata changes
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY ui/package.json ./ui/package.json
-COPY patches ./patches
 COPY scripts ./scripts
 
 RUN pnpm install --frozen-lockfile
@@ -257,6 +256,14 @@ precedence, and troubleshooting.
 - Default deny: `browser`, `canvas`, `nodes`, `cron`, `discord`, `gateway`
 
 ### Enable sandboxing
+
+If you plan to install packages in `setupCommand`, note:
+- Default `docker.network` is `"none"` (no egress).
+- `readOnlyRoot: true` blocks package installs.
+- `user` must be root for `apt-get` (omit `user` or set `user: "0:0"`).
+Clawdbot auto-recreates containers when `setupCommand` (or docker config) changes
+unless the container was **recently used** (within ~5 minutes). Hot containers
+log a warning with the exact `clawdbot sandbox recreate ...` command.
 
 ```json5
 {
@@ -437,3 +444,7 @@ Example:
 - Container not running: it will auto-create per session on demand.
 - Permission errors in sandbox: set `docker.user` to a UID:GID that matches your
   mounted workspace ownership (or chown the workspace folder).
+- Custom tools not found: Clawdbot runs commands with `sh -lc` (login shell), which
+  sources `/etc/profile` and may reset PATH. Set `docker.env.PATH` to prepend your
+  custom tool paths (e.g., `/custom/bin:/usr/local/share/npm-global/bin`), or add
+  a script under `/etc/profile.d/` in your Dockerfile.

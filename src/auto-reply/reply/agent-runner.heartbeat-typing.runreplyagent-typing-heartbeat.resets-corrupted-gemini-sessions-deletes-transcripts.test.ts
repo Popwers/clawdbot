@@ -34,8 +34,7 @@ vi.mock("../../agents/pi-embedded.js", () => ({
 }));
 
 vi.mock("./queue.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("./queue.js")>("./queue.js");
+  const actual = await vi.importActual<typeof import("./queue.js")>("./queue.js");
   return {
     ...actual,
     enqueueFollowupRun: vi.fn(),
@@ -124,9 +123,7 @@ function createMinimalRun(params?: {
 describe("runReplyAgent typing (heartbeat)", () => {
   it("resets corrupted Gemini sessions and deletes transcripts", async () => {
     const prevStateDir = process.env.CLAWDBOT_STATE_DIR;
-    const stateDir = await fs.mkdtemp(
-      path.join(tmpdir(), "clawdbot-session-reset-"),
-    );
+    const stateDir = await fs.mkdtemp(path.join(tmpdir(), "clawdbot-session-reset-"));
     process.env.CLAWDBOT_STATE_DIR = stateDir;
     try {
       const sessionId = "session-corrupt";
@@ -173,9 +170,7 @@ describe("runReplyAgent typing (heartbeat)", () => {
   });
   it("keeps sessions intact on other errors", async () => {
     const prevStateDir = process.env.CLAWDBOT_STATE_DIR;
-    const stateDir = await fs.mkdtemp(
-      path.join(tmpdir(), "clawdbot-session-noreset-"),
-    );
+    const stateDir = await fs.mkdtemp(path.join(tmpdir(), "clawdbot-session-noreset-"));
     process.env.CLAWDBOT_STATE_DIR = stateDir;
     try {
       const sessionId = "session-ok";
@@ -217,5 +212,32 @@ describe("runReplyAgent typing (heartbeat)", () => {
         delete process.env.CLAWDBOT_STATE_DIR;
       }
     }
+  });
+  it("returns friendly message for role ordering errors thrown as exceptions", async () => {
+    runEmbeddedPiAgentMock.mockImplementationOnce(async () => {
+      throw new Error("400 Incorrect role information");
+    });
+
+    const { run } = createMinimalRun({});
+    const res = await run();
+
+    expect(res).toMatchObject({
+      text: expect.stringContaining("Message ordering conflict"),
+    });
+    expect(res).toMatchObject({
+      text: expect.not.stringContaining("400"),
+    });
+  });
+  it("returns friendly message for 'roles must alternate' errors thrown as exceptions", async () => {
+    runEmbeddedPiAgentMock.mockImplementationOnce(async () => {
+      throw new Error('messages: roles must alternate between "user" and "assistant"');
+    });
+
+    const { run } = createMinimalRun({});
+    const res = await run();
+
+    expect(res).toMatchObject({
+      text: expect.stringContaining("Message ordering conflict"),
+    });
   });
 });

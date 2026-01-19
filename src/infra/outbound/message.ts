@@ -1,7 +1,4 @@
-import {
-  getChannelPlugin,
-  normalizeChannelId,
-} from "../../channels/plugins/index.js";
+import { getChannelPlugin, normalizeChannelId } from "../../channels/plugins/index.js";
 import type { ChannelId } from "../../channels/plugins/types.js";
 import type { ClawdbotConfig } from "../../config/config.js";
 import { loadConfig } from "../../config/config.js";
@@ -45,6 +42,10 @@ type MessageSendParams = {
   cfg?: ClawdbotConfig;
   gateway?: MessageGatewayOptions;
   idempotencyKey?: string;
+  mirror?: {
+    sessionKey: string;
+    agentId?: string;
+  };
 };
 
 export type MessageSendResult = {
@@ -101,9 +102,7 @@ function resolveGatewayOptions(opts?: MessageGatewayOptions) {
   };
 }
 
-export async function sendMessage(
-  params: MessageSendParams,
-): Promise<MessageSendResult> {
+export async function sendMessage(params: MessageSendParams): Promise<MessageSendResult> {
   const cfg = params.cfg ?? loadConfig();
   const channel = params.channel?.trim()
     ? normalizeChannelId(params.channel)
@@ -147,6 +146,13 @@ export async function sendMessage(
       gifPlayback: params.gifPlayback,
       deps: params.deps,
       bestEffort: params.bestEffort,
+      mirror: params.mirror
+        ? {
+            ...params.mirror,
+            text: params.content,
+            mediaUrls: params.mediaUrl ? [params.mediaUrl] : undefined,
+          }
+        : undefined,
     });
 
     return {
@@ -170,6 +176,7 @@ export async function sendMessage(
       gifPlayback: params.gifPlayback,
       accountId: params.accountId,
       channel,
+      sessionKey: params.mirror?.sessionKey,
       idempotencyKey: params.idempotencyKey ?? randomIdempotencyKey(),
     },
     timeoutMs: gateway.timeoutMs,
@@ -187,9 +194,7 @@ export async function sendMessage(
   };
 }
 
-export async function sendPoll(
-  params: MessagePollParams,
-): Promise<MessagePollResult> {
+export async function sendPoll(params: MessagePollParams): Promise<MessagePollResult> {
   const cfg = params.cfg ?? loadConfig();
   const channel = params.channel?.trim()
     ? normalizeChannelId(params.channel)

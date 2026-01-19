@@ -4,11 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { normalizeTestText } from "../../test/helpers/normalize-text.js";
 import { withTempHome } from "../../test/helpers/temp-home.js";
 import type { ClawdbotConfig } from "../config/config.js";
-import {
-  buildCommandsMessage,
-  buildHelpMessage,
-  buildStatusMessage,
-} from "./status.js";
+import { buildCommandsMessage, buildHelpMessage, buildStatusMessage } from "./status.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -94,6 +90,59 @@ describe("buildStatusMessage", () => {
     expect(text).toContain("elevated");
   });
 
+  it("includes media understanding decisions when present", () => {
+    const text = buildStatusMessage({
+      agent: { model: "anthropic/claude-opus-4-5" },
+      sessionEntry: { sessionId: "media", updatedAt: 0 },
+      sessionKey: "agent:main:main",
+      queue: { mode: "none" },
+      mediaDecisions: [
+        {
+          capability: "image",
+          outcome: "success",
+          attachments: [
+            {
+              attachmentIndex: 0,
+              attempts: [
+                {
+                  type: "provider",
+                  outcome: "success",
+                  provider: "openai",
+                  model: "gpt-5.2",
+                },
+              ],
+              chosen: {
+                type: "provider",
+                outcome: "success",
+                provider: "openai",
+                model: "gpt-5.2",
+              },
+            },
+          ],
+        },
+        {
+          capability: "audio",
+          outcome: "skipped",
+          attachments: [
+            {
+              attachmentIndex: 1,
+              attempts: [
+                {
+                  type: "provider",
+                  outcome: "skipped",
+                  reason: "maxBytes: too large",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    const normalized = normalizeTestText(text);
+    expect(normalized).toContain("Media: image ok (openai/gpt-5.2) · audio skipped (maxBytes)");
+  });
+
   it("does not show elevated label when session explicitly disables it", () => {
     const text = buildStatusMessage({
       agent: { model: "anthropic/claude-opus-4-5", elevatedDefault: "on" },
@@ -105,9 +154,7 @@ describe("buildStatusMessage", () => {
       queue: { mode: "collect", depth: 0 },
     });
 
-    const optionsLine = text
-      .split("\n")
-      .find((line) => line.trim().startsWith("⚙️"));
+    const optionsLine = text.split("\n").find((line) => line.trim().startsWith("⚙️"));
     expect(optionsLine).toBeTruthy();
     expect(optionsLine).not.toContain("elevated");
   });
@@ -146,9 +193,7 @@ describe("buildStatusMessage", () => {
       modelAuth: "api-key",
     });
 
-    expect(normalizeTestText(text)).toContain(
-      "Model: google-antigravity/claude-sonnet-4-5",
-    );
+    expect(normalizeTestText(text)).toContain("Model: google-antigravity/claude-sonnet-4-5");
   });
 
   it("handles missing agent config gracefully", () => {
@@ -200,9 +245,7 @@ describe("buildStatusMessage", () => {
       modelAuth: "api-key",
     });
 
-    expect(text).toContain(
-      "Queue: collect (depth 3 · debounce 2s · cap 5 · drop old)",
-    );
+    expect(text).toContain("Queue: collect (depth 3 · debounce 2s · cap 5 · drop old)");
   });
 
   it("inserts usage summary beneath context line", () => {
@@ -258,9 +301,7 @@ describe("buildStatusMessage", () => {
     await withTempHome(
       async (dir) => {
         vi.resetModules();
-        const { buildStatusMessage: buildStatusMessageDynamic } = await import(
-          "./status.js"
-        );
+        const { buildStatusMessage: buildStatusMessageDynamic } = await import("./status.js");
 
         const sessionId = "sess-1";
         const logPath = path.join(
@@ -325,14 +366,26 @@ describe("buildCommandsMessage", () => {
       commands: { config: false, debug: false },
     } as ClawdbotConfig);
     expect(text).toContain("/commands - List all slash commands.");
-    expect(text).toContain(
-      "/think (aliases: /thinking, /t) - Set thinking level.",
-    );
-    expect(text).toContain(
-      "/compact (text-only) - Compact the session context.",
-    );
+    expect(text).toContain("/think (aliases: /thinking, /t) - Set thinking level.");
+    expect(text).toContain("/compact (text-only) - Compact the session context.");
     expect(text).not.toContain("/config");
     expect(text).not.toContain("/debug");
+  });
+
+  it("includes skill commands when provided", () => {
+    const text = buildCommandsMessage(
+      {
+        commands: { config: false, debug: false },
+      } as ClawdbotConfig,
+      [
+        {
+          name: "demo_skill",
+          skillName: "demo-skill",
+          description: "Demo skill",
+        },
+      ],
+    );
+    expect(text).toContain("/demo_skill - Demo skill");
   });
 });
 

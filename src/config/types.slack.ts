@@ -60,19 +60,39 @@ export type SlackSlashCommandConfig = {
   ephemeral?: boolean;
 };
 
+export type SlackThreadConfig = {
+  /** Scope for thread history context (thread|channel). Default: thread. */
+  historyScope?: "thread" | "channel";
+  /** If true, thread sessions inherit the parent channel transcript. Default: false. */
+  inheritParent?: boolean;
+};
+
 export type SlackAccountConfig = {
   /** Optional display name for this account (used in CLI/UI lists). */
   name?: string;
+  /** Slack connection mode (socket|http). Default: socket. */
+  mode?: "socket" | "http";
+  /** Slack signing secret (required for HTTP mode). */
+  signingSecret?: string;
+  /** Slack Events API webhook path (default: /slack/events). */
+  webhookPath?: string;
   /** Optional provider capability tags used for agent/runtime guidance. */
   capabilities?: string[];
   /** Override native command registration for Slack (bool or "auto"). */
   commands?: ProviderCommandsConfig;
+  /** Allow channel-initiated config writes (default: true). */
+  configWrites?: boolean;
   /** If false, do not start this Slack account. Default: true. */
   enabled?: boolean;
   botToken?: string;
   appToken?: string;
+  userToken?: string;
+  /** If true, restrict user token to read operations only. Default: true. */
+  userTokenReadOnly?: boolean;
   /** Allow bot-authored messages to trigger replies (default: false). */
   allowBots?: boolean;
+  /** Default mention requirement for channel messages (default: true). */
+  requireMention?: boolean;
   /**
    * Controls how channel messages are handled:
    * - "open": channels bypass allowlists; mention-gating applies
@@ -97,6 +117,8 @@ export type SlackAccountConfig = {
   reactionAllowlist?: Array<string | number>;
   /** Control reply threading when reply tags are present (off|first|all). */
   replyToMode?: ReplyToMode;
+  /** Thread session behavior. */
+  thread?: SlackThreadConfig;
   actions?: SlackActionConfig;
   slashCommand?: SlackSlashCommandConfig;
   dm?: SlackDmConfig;

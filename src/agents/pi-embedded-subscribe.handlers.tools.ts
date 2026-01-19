@@ -2,19 +2,32 @@ import type { AgentEvent } from "@mariozechner/pi-agent-core";
 
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { normalizeTextForComparison } from "./pi-embedded-helpers.js";
-import {
-  isMessagingTool,
-  isMessagingToolSendAction,
-} from "./pi-embedded-messaging.js";
+import { isMessagingTool, isMessagingToolSendAction } from "./pi-embedded-messaging.js";
 import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
 import {
+  extractToolErrorMessage,
+  extractToolResultText,
   extractMessagingToolSend,
   isToolResultError,
   sanitizeToolResult,
 } from "./pi-embedded-subscribe.tools.js";
 import { inferToolMetaFromArgs } from "./pi-embedded-utils.js";
+import { normalizeToolName } from "./tool-policy.js";
 
-export function handleToolExecutionStart(
+function extendExecMeta(toolName: string, args: unknown, meta?: string): string | undefined {
+  const normalized = toolName.trim().toLowerCase();
+  if (normalized !== "exec" && normalized !== "bash") return meta;
+  if (!args || typeof args !== "object") return meta;
+  const record = args as Record<string, unknown>;
+  const flags: string[] = [];
+  if (record.pty === true) flags.push("pty");
+  if (record.elevated === true) flags.push("elevated");
+  if (flags.length === 0) return meta;
+  const suffix = flags.join(" · ");
+  return meta ? `${meta} · ${suffix}` : suffix;
+}
+
+export async function handleToolExecutionStart(
   ctx: EmbeddedPiSubscribeContext,
   evt: AgentEvent & { toolName: string; toolCallId: string; args: unknown },
 ) {
@@ -24,24 +37,23 @@ export function handleToolExecutionStart(
     void ctx.params.onBlockReplyFlush();
   }
 
-  const toolName = String(evt.toolName);
+  const rawToolName = String(evt.toolName);
+  const toolName = normalizeToolName(rawToolName);
   const toolCallId = String(evt.toolCallId);
   const args = evt.args;
 
   if (toolName === "read") {
-    const record =
-      args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+    const record = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
     const filePath = typeof record.path === "string" ? record.path.trim() : "";
     if (!filePath) {
-      const argsPreview =
-        typeof args === "string" ? args.slice(0, 200) : undefined;
+      const argsPreview = typeof args === "string" ? args.slice(0, 200) : undefined;
       ctx.log.warn(
         `read tool called without path: toolCallId=${toolCallId} argsType=${typeof args}${argsPreview ? ` argsPreview=${argsPreview}` : ""}`,
       );
     }
   }
 
-  const meta = inferToolMetaFromArgs(toolName, args);
+  const meta = extendExecMeta(toolName, args, inferToolMetaFromArgs(toolName, args));
   ctx.state.toolMetaById.set(toolCallId, meta);
   ctx.log.debug(
     `embedded run tool start: runId=${ctx.params.runId} tool=${toolName} toolCallId=${toolCallId}`,
@@ -58,7 +70,8 @@ export function handleToolExecutionStart(
       args: args as Record<string, unknown>,
     },
   });
-  ctx.params.onAgentEvent?.({
+  // Best-effort typing signal; do not block tool summaries on slow emitters.
+  void ctx.params.onAgentEvent?.({
     stream: "tool",
     data: { phase: "start", name: toolName, toolCallId },
   });
@@ -74,8 +87,7 @@ export function handleToolExecutionStart(
 
   // Track messaging tool sends (pending until confirmed in tool_execution_end).
   if (isMessagingTool(toolName)) {
-    const argsRecord =
-      args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+    const argsRecord = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
     const isMessagingSend = isMessagingToolSendAction(toolName, argsRecord);
     if (isMessagingSend) {
       const sendTarget = extractMessagingToolSend(toolName, argsRecord);
@@ -83,13 +95,10 @@ export function handleToolExecutionStart(
         ctx.state.pendingMessagingTargets.set(toolCallId, sendTarget);
       }
       // Field names vary by tool: Discord/Slack use "content", sessions_send uses "message"
-      const text =
-        (argsRecord.content as string) ?? (argsRecord.message as string);
+      const text = (argsRecord.content as string) ?? (argsRecord.message as string);
       if (text && typeof text === "string") {
         ctx.state.pendingMessagingTexts.set(toolCallId, text);
-        ctx.log.debug(
-          `Tracking pending messaging text: tool=${toolName} len=${text.length}`,
-        );
+        ctx.log.debug(`Tracking pending messaging text: tool=${toolName} len=${text.length}`);
       }
     }
   }
@@ -103,7 +112,7 @@ export function handleToolExecutionUpdate(
     partialResult?: unknown;
   },
 ) {
-  const toolName = String(evt.toolName);
+  const toolName = normalizeToolName(String(evt.toolName));
   const toolCallId = String(evt.toolCallId);
   const partial = evt.partialResult;
   const sanitized = sanitizeToolResult(partial);
@@ -117,7 +126,7 @@ export function handleToolExecutionUpdate(
       partialResult: sanitized,
     },
   });
-  ctx.params.onAgentEvent?.({
+  void ctx.params.onAgentEvent?.({
     stream: "tool",
     data: {
       phase: "update",
@@ -136,7 +145,7 @@ export function handleToolExecutionEnd(
     result?: unknown;
   },
 ) {
-  const toolName = String(evt.toolName);
+  const toolName = normalizeToolName(String(evt.toolName));
   const toolCallId = String(evt.toolCallId);
   const isError = Boolean(evt.isError);
   const result = evt.result;
@@ -146,6 +155,14 @@ export function handleToolExecutionEnd(
   ctx.state.toolMetas.push({ toolName, meta });
   ctx.state.toolMetaById.delete(toolCallId);
   ctx.state.toolSummaryById.delete(toolCallId);
+  if (isToolError) {
+    const errorMessage = extractToolErrorMessage(sanitizedResult);
+    ctx.state.lastToolError = {
+      toolName,
+      meta,
+      error: errorMessage,
+    };
+  }
 
   // Commit messaging tool text on success, discard on error.
   const pendingText = ctx.state.pendingMessagingTexts.get(toolCallId);
@@ -154,12 +171,8 @@ export function handleToolExecutionEnd(
     ctx.state.pendingMessagingTexts.delete(toolCallId);
     if (!isToolError) {
       ctx.state.messagingToolSentTexts.push(pendingText);
-      ctx.state.messagingToolSentTextsNormalized.push(
-        normalizeTextForComparison(pendingText),
-      );
-      ctx.log.debug(
-        `Committed messaging text: tool=${toolName} len=${pendingText.length}`,
-      );
+      ctx.state.messagingToolSentTextsNormalized.push(normalizeTextForComparison(pendingText));
+      ctx.log.debug(`Committed messaging text: tool=${toolName} len=${pendingText.length}`);
       ctx.trimMessagingToolSent();
     }
   }
@@ -183,7 +196,7 @@ export function handleToolExecutionEnd(
       result: sanitizedResult,
     },
   });
-  ctx.params.onAgentEvent?.({
+  void ctx.params.onAgentEvent?.({
     stream: "tool",
     data: {
       phase: "result",
@@ -197,4 +210,11 @@ export function handleToolExecutionEnd(
   ctx.log.debug(
     `embedded run tool end: runId=${ctx.params.runId} tool=${toolName} toolCallId=${toolCallId}`,
   );
+
+  if (ctx.params.onToolResult && ctx.shouldEmitToolOutput()) {
+    const outputText = extractToolResultText(sanitizedResult);
+    if (outputText) {
+      ctx.emitToolOutput(toolName, meta, outputText);
+    }
+  }
 }

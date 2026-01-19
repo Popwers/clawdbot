@@ -1,5 +1,5 @@
-import { listChannelPlugins } from "../../channels/plugins/index.js";
 import { VERSION } from "../../version.js";
+import { resolveCliChannelOptions } from "../channel-options.js";
 
 export type ProgramContext = {
   programVersion: string;
@@ -9,7 +9,7 @@ export type ProgramContext = {
 };
 
 export function createProgramContext(): ProgramContext {
-  const channelOptions = listChannelPlugins().map((plugin) => plugin.id);
+  const channelOptions = resolveCliChannelOptions();
   return {
     programVersion: VERSION,
     channelOptions,

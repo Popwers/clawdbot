@@ -77,9 +77,7 @@ describe("gateway SIGTERM", () => {
 
   it("exits 0 on SIGTERM", { timeout: 180_000 }, async () => {
     const port = await getFreePort();
-    const stateDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "clawdbot-gateway-test-"),
-    );
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawdbot-gateway-test-"));
     const configPath = path.join(stateDir, "clawdbot.json");
     fs.writeFileSync(
       configPath,
@@ -89,35 +87,35 @@ describe("gateway SIGTERM", () => {
     const out: string[] = [];
     const err: string[] = [];
 
-    child = spawn(
-      process.execPath,
-      [
-        "--import",
-        "tsx",
-        "src/index.ts",
-        "gateway",
-        "--port",
-        String(port),
-        "--bind",
-        "loopback",
-        "--allow-unconfigured",
-      ],
-      {
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          CLAWDBOT_STATE_DIR: stateDir,
-          CLAWDBOT_CONFIG_PATH: configPath,
-          CLAWDBOT_SKIP_CHANNELS: "1",
-          CLAWDBOT_SKIP_BROWSER_CONTROL_SERVER: "1",
-          CLAWDBOT_SKIP_CANVAS_HOST: "1",
-          // Avoid port collisions with other test processes that may also start a bridge server.
-          CLAWDBOT_BRIDGE_HOST: "127.0.0.1",
-          CLAWDBOT_BRIDGE_PORT: "0",
-        },
-        stdio: ["ignore", "pipe", "pipe"],
+    const nodeBin = process.execPath;
+    const args = [
+      "--import",
+      "tsx",
+      "src/entry.ts",
+      "gateway",
+      "--port",
+      String(port),
+      "--bind",
+      "loopback",
+      "--allow-unconfigured",
+    ];
+
+    child = spawn(nodeBin, args, {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        CLAWDBOT_NO_RESPAWN: "1",
+        CLAWDBOT_STATE_DIR: stateDir,
+        CLAWDBOT_CONFIG_PATH: configPath,
+        CLAWDBOT_SKIP_CHANNELS: "1",
+        CLAWDBOT_SKIP_BROWSER_CONTROL_SERVER: "1",
+        CLAWDBOT_SKIP_CANVAS_HOST: "1",
+        // Avoid port collisions with other test processes that may also start a gateway server.
+        CLAWDBOT_BRIDGE_HOST: "127.0.0.1",
+        CLAWDBOT_BRIDGE_PORT: "0",
       },
-    );
+      stdio: ["ignore", "pipe", "pipe"],
+    });
 
     const proc = child;
     if (!proc) throw new Error("failed to spawn gateway");
@@ -134,14 +132,9 @@ describe("gateway SIGTERM", () => {
     const result = await new Promise<{
       code: number | null;
       signal: NodeJS.Signals | null;
-    }>((resolve) =>
-      proc.once("exit", (code, signal) => resolve({ code, signal })),
-    );
+    }>((resolve) => proc.once("exit", (code, signal) => resolve({ code, signal })));
 
-    if (
-      result.code !== 0 &&
-      !(result.code === null && result.signal === "SIGTERM")
-    ) {
+    if (result.code !== 0 && !(result.code === null && result.signal === "SIGTERM")) {
       const stdout = out.join("");
       const stderr = err.join("");
       throw new Error(

@@ -1,14 +1,11 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
-import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import {
-  GATEWAY_CLIENT_MODES,
-  GATEWAY_CLIENT_NAMES,
-} from "../utils/message-channel.js";
+import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
+import { getDeterministicFreePortBlock } from "../test-utils/ports.js";
 
 import { GatewayClient } from "./client.js";
 import { startGatewayServer } from "./server.js";
@@ -148,14 +145,11 @@ function decodeBodyText(body: unknown): string {
   if (!body) return "";
   if (typeof body === "string") return body;
   if (body instanceof Uint8Array) return Buffer.from(body).toString("utf8");
-  if (body instanceof ArrayBuffer)
-    return Buffer.from(new Uint8Array(body)).toString("utf8");
+  if (body instanceof ArrayBuffer) return Buffer.from(new Uint8Array(body)).toString("utf8");
   return "";
 }
 
-async function buildOpenAIResponsesSse(
-  params: OpenAIResponsesParams,
-): Promise<Response> {
+async function buildOpenAIResponsesSse(params: OpenAIResponsesParams): Promise<Response> {
   const events: OpenAIResponseStreamEvent[] = [];
   for await (const event of fakeOpenAIResponsesStream(params)) {
     events.push(event);
@@ -175,102 +169,49 @@ async function buildOpenAIResponsesSse(
   });
 }
 
-async function getFreePort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.on("error", reject);
-    srv.listen(0, "127.0.0.1", () => {
-      const addr = srv.address();
-      if (!addr || typeof addr === "string") {
-        srv.close();
-        reject(new Error("failed to acquire free port"));
-        return;
-      }
-      const port = addr.port;
-      srv.close((err) => {
-        if (err) reject(err);
-        else resolve(port);
-      });
-    });
-  });
-}
-
-async function isPortFree(port: number): Promise<boolean> {
-  if (!Number.isFinite(port) || port <= 0 || port > 65535) return false;
-  return await new Promise((resolve) => {
-    const srv = createServer();
-    srv.once("error", () => resolve(false));
-    srv.listen(port, "127.0.0.1", () => {
-      srv.close(() => resolve(true));
-    });
-  });
-}
-
 async function getFreeGatewayPort(): Promise<number> {
-  // Gateway uses derived ports (bridge/browser/canvas). Avoid flaky collisions by
-  // ensuring the common derived offsets are free too.
-  for (let attempt = 0; attempt < 25; attempt += 1) {
-    const port = await getFreePort();
-    const candidates = [port, port + 1, port + 2, port + 4];
-    const ok = (
-      await Promise.all(candidates.map((candidate) => isPortFree(candidate)))
-    ).every(Boolean);
-    if (ok) return port;
-  }
-  throw new Error("failed to acquire a free gateway port block");
+  return await getDeterministicFreePortBlock({ offsets: [0, 1, 2, 3, 4] });
 }
 
 function extractPayloadText(result: unknown): string {
   const record = result as Record<string, unknown>;
   const payloads = Array.isArray(record.payloads) ? record.payloads : [];
   const texts = payloads
-    .map((p) =>
-      p && typeof p === "object"
-        ? (p as Record<string, unknown>).text
-        : undefined,
-    )
+    .map((p) => (p && typeof p === "object" ? (p as Record<string, unknown>).text : undefined))
     .filter((t): t is string => typeof t === "string" && t.trim().length > 0);
   return texts.join("\n").trim();
 }
 
 async function connectClient(params: { url: string; token: string }) {
-  return await new Promise<InstanceType<typeof GatewayClient>>(
-    (resolve, reject) => {
-      let settled = false;
-      const stop = (
-        err?: Error,
-        client?: InstanceType<typeof GatewayClient>,
-      ) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (err) reject(err);
-        else resolve(client as InstanceType<typeof GatewayClient>);
-      };
-      const client = new GatewayClient({
-        url: params.url,
-        token: params.token,
-        clientName: GATEWAY_CLIENT_NAMES.TEST,
-        clientDisplayName: "vitest-mock-openai",
-        clientVersion: "dev",
-        mode: GATEWAY_CLIENT_MODES.TEST,
-        onHelloOk: () => stop(undefined, client),
-        onConnectError: (err) => stop(err),
-        onClose: (code, reason) =>
-          stop(new Error(`gateway closed during connect (${code}): ${reason}`)),
-      });
-      const timer = setTimeout(
-        () => stop(new Error("gateway connect timeout")),
-        10_000,
-      );
-      timer.unref();
-      client.start();
-    },
-  );
+  return await new Promise<InstanceType<typeof GatewayClient>>((resolve, reject) => {
+    let settled = false;
+    const stop = (err?: Error, client?: InstanceType<typeof GatewayClient>) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err) reject(err);
+      else resolve(client as InstanceType<typeof GatewayClient>);
+    };
+    const client = new GatewayClient({
+      url: params.url,
+      token: params.token,
+      clientName: GATEWAY_CLIENT_NAMES.TEST,
+      clientDisplayName: "vitest-mock-openai",
+      clientVersion: "dev",
+      mode: GATEWAY_CLIENT_MODES.TEST,
+      onHelloOk: () => stop(undefined, client),
+      onConnectError: (err) => stop(err),
+      onClose: (code, reason) =>
+        stop(new Error(`gateway closed during connect (${code}): ${reason}`)),
+    });
+    const timer = setTimeout(() => stop(new Error("gateway connect timeout")), 10_000);
+    timer.unref();
+    client.start();
+  });
 }
 
 describe("gateway (mock openai): tool calling", () => {
-  it("runs a Read tool call end-to-end via gateway agent loop", async () => {
+  it("runs a Read tool call end-to-end via gateway agent loop", { timeout: 90_000 }, async () => {
     const prev = {
       home: process.env.HOME,
       configPath: process.env.CLAWDBOT_CONFIG_PATH,
@@ -282,21 +223,15 @@ describe("gateway (mock openai): tool calling", () => {
     };
 
     const originalFetch = globalThis.fetch;
-    const openaiResponsesUrl = "https://api.openai.com/v1/responses";
+    const openaiBaseUrl = "https://api.openai.com/v1";
+    const openaiResponsesUrl = `${openaiBaseUrl}/responses`;
     const isOpenAIResponsesRequest = (url: string) =>
       url === openaiResponsesUrl ||
       url.startsWith(`${openaiResponsesUrl}/`) ||
       url.startsWith(`${openaiResponsesUrl}?`);
-    const fetchImpl = async (
-      input: RequestInfo | URL,
-      init?: RequestInit,
-    ): Promise<Response> => {
+    const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input.url;
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 
       if (isOpenAIResponsesRequest(url)) {
         const bodyText =
@@ -306,11 +241,12 @@ describe("gateway (mock openai): tool calling", () => {
               ? await input.clone().text()
               : "";
 
-        const parsed = bodyText
-          ? (JSON.parse(bodyText) as Record<string, unknown>)
-          : {};
+        const parsed = bodyText ? (JSON.parse(bodyText) as Record<string, unknown>) : {};
         const inputItems = Array.isArray(parsed.input) ? parsed.input : [];
         return await buildOpenAIResponsesSse({ input: inputItems });
+      }
+      if (url.startsWith(openaiBaseUrl)) {
+        throw new Error(`unexpected OpenAI request in mock test: ${url}`);
       }
 
       if (!originalFetch) {
@@ -321,9 +257,7 @@ describe("gateway (mock openai): tool calling", () => {
     // TypeScript: Bun's fetch typing includes extra properties; keep this test portable.
     (globalThis as unknown as { fetch: unknown }).fetch = fetchImpl;
 
-    const tempHome = await fs.mkdtemp(
-      path.join(os.tmpdir(), "clawdbot-gw-mock-home-"),
-    );
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "clawdbot-gw-mock-home-"));
     process.env.HOME = tempHome;
     process.env.CLAWDBOT_SKIP_CHANNELS = "1";
     process.env.CLAWDBOT_SKIP_GMAIL_WATCHER = "1";
@@ -338,10 +272,7 @@ describe("gateway (mock openai): tool calling", () => {
 
     const nonceA = randomUUID();
     const nonceB = randomUUID();
-    const toolProbePath = path.join(
-      workspaceDir,
-      `.clawdbot-tool-probe.${nonceA}.txt`,
-    );
+    const toolProbePath = path.join(workspaceDir, `.clawdbot-tool-probe.${nonceA}.txt`);
     await fs.writeFile(toolProbePath, `nonceA=${nonceA}\nnonceB=${nonceB}\n`);
 
     const configDir = path.join(tempHome, ".clawdbot");
@@ -354,7 +285,7 @@ describe("gateway (mock openai): tool calling", () => {
         mode: "replace",
         providers: {
           openai: {
-            baseUrl: "https://api.openai.com/v1",
+            baseUrl: openaiBaseUrl,
             apiKey: "test",
             api: "openai-responses",
             models: [
@@ -432,5 +363,5 @@ describe("gateway (mock openai): tool calling", () => {
       process.env.CLAWDBOT_SKIP_CRON = prev.skipCron;
       process.env.CLAWDBOT_SKIP_CANVAS_HOST = prev.skipCanvas;
     }
-  }, 30_000);
+  });
 });

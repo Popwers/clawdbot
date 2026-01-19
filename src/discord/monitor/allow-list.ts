@@ -1,5 +1,10 @@
 import type { Guild, User } from "@buape/carbon";
 
+import {
+  buildChannelKeyCandidates,
+  resolveChannelEntryMatchWithFallback,
+} from "../../channels/channel-config.js";
+import type { AllowlistMatch } from "../../channels/allowlist-match.js";
 import { formatDiscordUserTag } from "./format.js";
 
 export type DiscordAllowList = {
@@ -7,6 +12,8 @@ export type DiscordAllowList = {
   ids: Set<string>;
   names: Set<string>;
 };
+
+export type DiscordAllowListMatch = AllowlistMatch<"wildcard" | "id" | "name" | "tag">;
 
 export type DiscordGuildEntryResolved = {
   id?: string;
@@ -36,6 +43,8 @@ export type DiscordChannelConfigResolved = {
   users?: Array<string | number>;
   systemPrompt?: string;
   autoThread?: boolean;
+  matchKey?: string;
+  matchSource?: "direct" | "parent";
 };
 
 export function normalizeDiscordAllowList(
@@ -85,9 +94,30 @@ export function allowListMatches(
   if (candidate.id && list.ids.has(candidate.id)) return true;
   const slug = candidate.name ? normalizeDiscordSlug(candidate.name) : "";
   if (slug && list.names.has(slug)) return true;
-  if (candidate.tag && list.names.has(normalizeDiscordSlug(candidate.tag)))
-    return true;
+  if (candidate.tag && list.names.has(normalizeDiscordSlug(candidate.tag))) return true;
   return false;
+}
+
+export function resolveDiscordAllowListMatch(params: {
+  allowList: DiscordAllowList;
+  candidate: { id?: string; name?: string; tag?: string };
+}): DiscordAllowListMatch {
+  const { allowList, candidate } = params;
+  if (allowList.allowAll) {
+    return { allowed: true, matchKey: "*", matchSource: "wildcard" };
+  }
+  if (candidate.id && allowList.ids.has(candidate.id)) {
+    return { allowed: true, matchKey: candidate.id, matchSource: "id" };
+  }
+  const nameSlug = candidate.name ? normalizeDiscordSlug(candidate.name) : "";
+  if (nameSlug && allowList.names.has(nameSlug)) {
+    return { allowed: true, matchKey: nameSlug, matchSource: "name" };
+  }
+  const tagSlug = candidate.tag ? normalizeDiscordSlug(candidate.tag) : "";
+  if (tagSlug && allowList.names.has(tagSlug)) {
+    return { allowed: true, matchKey: tagSlug, matchSource: "tag" };
+  }
+  return { allowed: false };
 }
 
 export function resolveDiscordUserAllowed(params: {
@@ -96,10 +126,7 @@ export function resolveDiscordUserAllowed(params: {
   userName?: string;
   userTag?: string;
 }) {
-  const allowList = normalizeDiscordAllowList(params.allowList, [
-    "discord:",
-    "user:",
-  ]);
+  const allowList = normalizeDiscordAllowList(params.allowList, ["discord:", "user:"]);
   if (!allowList) return true;
   return allowListMatches(allowList, {
     id: params.userId,
@@ -115,10 +142,7 @@ export function resolveDiscordCommandAuthorized(params: {
   author: User;
 }) {
   if (!params.isDirectMessage) return true;
-  const allowList = normalizeDiscordAllowList(params.allowFrom, [
-    "discord:",
-    "user:",
-  ]);
+  const allowList = normalizeDiscordAllowList(params.allowFrom, ["discord:", "user:"]);
   if (!allowList) return true;
   return allowListMatches(allowList, {
     id: params.author.id,
@@ -140,9 +164,60 @@ export function resolveDiscordGuildEntry(params: {
   const bySlug = entries[slug];
   if (bySlug) return { ...bySlug, id: guild.id, slug: slug || bySlug.slug };
   const wildcard = entries["*"];
-  if (wildcard)
-    return { ...wildcard, id: guild.id, slug: slug || wildcard.slug };
+  if (wildcard) return { ...wildcard, id: guild.id, slug: slug || wildcard.slug };
   return null;
+}
+
+type DiscordChannelEntry = NonNullable<DiscordGuildEntryResolved["channels"]>[string];
+type DiscordChannelLookup = {
+  id: string;
+  name?: string;
+  slug?: string;
+};
+type DiscordChannelScope = "channel" | "thread";
+
+function buildDiscordChannelKeys(
+  params: DiscordChannelLookup & { allowNameMatch?: boolean },
+): string[] {
+  const allowNameMatch = params.allowNameMatch !== false;
+  return buildChannelKeyCandidates(
+    params.id,
+    allowNameMatch ? params.slug : undefined,
+    allowNameMatch ? params.name : undefined,
+  );
+}
+
+function resolveDiscordChannelEntryMatch(
+  channels: NonNullable<DiscordGuildEntryResolved["channels"]>,
+  params: DiscordChannelLookup & { allowNameMatch?: boolean },
+  parentParams?: DiscordChannelLookup,
+) {
+  const keys = buildDiscordChannelKeys(params);
+  const parentKeys = parentParams ? buildDiscordChannelKeys(parentParams) : undefined;
+  return resolveChannelEntryMatchWithFallback({
+    entries: channels,
+    keys,
+    parentKeys,
+  });
+}
+
+function resolveDiscordChannelConfigEntry(
+  entry: DiscordChannelEntry,
+  matchKey: string | undefined,
+  matchSource: "direct" | "parent",
+): DiscordChannelConfigResolved {
+  const resolved: DiscordChannelConfigResolved = {
+    allowed: entry.allow !== false,
+    requireMention: entry.requireMention,
+    skills: entry.skills,
+    enabled: entry.enabled,
+    users: entry.users,
+    systemPrompt: entry.systemPrompt,
+    autoThread: entry.autoThread,
+  };
+  if (matchKey) resolved.matchKey = matchKey;
+  resolved.matchSource = matchSource;
+  return resolved;
 }
 
 export function resolveDiscordChannelConfig(params: {
@@ -154,40 +229,60 @@ export function resolveDiscordChannelConfig(params: {
   const { guildInfo, channelId, channelName, channelSlug } = params;
   const channels = guildInfo?.channels;
   if (!channels) return null;
-  const byId = channels[channelId];
-  if (byId)
-    return {
-      allowed: byId.allow !== false,
-      requireMention: byId.requireMention,
-      skills: byId.skills,
-      enabled: byId.enabled,
-      users: byId.users,
-      systemPrompt: byId.systemPrompt,
-      autoThread: byId.autoThread,
-    };
-  if (channelSlug && channels[channelSlug]) {
-    const entry = channels[channelSlug];
-    return {
-      allowed: entry.allow !== false,
-      requireMention: entry.requireMention,
-      skills: entry.skills,
-      enabled: entry.enabled,
-      users: entry.users,
-      systemPrompt: entry.systemPrompt,
-      autoThread: entry.autoThread,
-    };
-  }
-  if (channelName && channels[channelName]) {
-    const entry = channels[channelName];
-    return {
-      allowed: entry.allow !== false,
-      requireMention: entry.requireMention,
-      skills: entry.skills,
-      enabled: entry.enabled,
-      users: entry.users,
-      systemPrompt: entry.systemPrompt,
-      autoThread: entry.autoThread,
-    };
+  const match = resolveDiscordChannelEntryMatch(channels, {
+    id: channelId,
+    name: channelName,
+    slug: channelSlug,
+  });
+  if (!match.entry || !match.matchKey) return { allowed: false };
+  return resolveDiscordChannelConfigEntry(match.entry, match.matchKey, "direct");
+}
+
+export function resolveDiscordChannelConfigWithFallback(params: {
+  guildInfo?: DiscordGuildEntryResolved | null;
+  channelId: string;
+  channelName?: string;
+  channelSlug: string;
+  parentId?: string;
+  parentName?: string;
+  parentSlug?: string;
+  scope?: DiscordChannelScope;
+}): DiscordChannelConfigResolved | null {
+  const {
+    guildInfo,
+    channelId,
+    channelName,
+    channelSlug,
+    parentId,
+    parentName,
+    parentSlug,
+    scope,
+  } = params;
+  const channels = guildInfo?.channels;
+  if (!channels) return null;
+  const resolvedParentSlug = parentSlug ?? (parentName ? normalizeDiscordSlug(parentName) : "");
+  const match = resolveDiscordChannelEntryMatch(
+    channels,
+    {
+      id: channelId,
+      name: channelName,
+      slug: channelSlug,
+      allowNameMatch: scope !== "thread",
+    },
+    parentId || parentName || parentSlug
+      ? {
+          id: parentId ?? "",
+          name: parentName,
+          slug: resolvedParentSlug,
+        }
+      : undefined,
+  );
+  if (match.entry && match.matchKey && match.matchSource) {
+    return resolveDiscordChannelConfigEntry(
+      match.entry,
+      match.matchKey,
+      match.matchSource === "parent" ? "parent" : "direct",
+    );
   }
   return { allowed: false };
 }
@@ -200,22 +295,20 @@ export function resolveDiscordShouldRequireMention(params: {
 }): boolean {
   if (!params.isGuildMessage) return false;
   if (params.isThread && params.channelConfig?.autoThread) return false;
-  return (
-    params.channelConfig?.requireMention ??
-    params.guildInfo?.requireMention ??
-    true
-  );
+  return params.channelConfig?.requireMention ?? params.guildInfo?.requireMention ?? true;
 }
 
 export function isDiscordGroupAllowedByPolicy(params: {
   groupPolicy: "open" | "disabled" | "allowlist";
+  guildAllowlisted: boolean;
   channelAllowlistConfigured: boolean;
   channelAllowed: boolean;
 }): boolean {
-  const { groupPolicy, channelAllowlistConfigured, channelAllowed } = params;
+  const { groupPolicy, guildAllowlisted, channelAllowlistConfigured, channelAllowed } = params;
   if (groupPolicy === "disabled") return false;
   if (groupPolicy === "open") return true;
-  if (!channelAllowlistConfigured) return false;
+  if (!guildAllowlisted) return false;
+  if (!channelAllowlistConfigured) return true;
   return channelAllowed;
 }
 
@@ -227,18 +320,13 @@ export function resolveGroupDmAllow(params: {
 }) {
   const { channels, channelId, channelName, channelSlug } = params;
   if (!channels || channels.length === 0) return true;
-  const allowList = channels.map((entry) =>
-    normalizeDiscordSlug(String(entry)),
-  );
+  const allowList = channels.map((entry) => normalizeDiscordSlug(String(entry)));
   const candidates = [
     normalizeDiscordSlug(channelId),
     channelSlug,
     channelName ? normalizeDiscordSlug(channelName) : "",
   ].filter(Boolean);
-  return (
-    allowList.includes("*") ||
-    candidates.some((candidate) => allowList.includes(candidate))
-  );
+  return allowList.includes("*") || candidates.some((candidate) => allowList.includes(candidate));
 }
 
 export function shouldEmitDiscordReactionNotification(params: {
@@ -257,10 +345,7 @@ export function shouldEmitDiscordReactionNotification(params: {
     return Boolean(params.botId && params.messageAuthorId === params.botId);
   }
   if (mode === "allowlist") {
-    const list = normalizeDiscordAllowList(params.allowlist, [
-      "discord:",
-      "user:",
-    ]);
+    const list = normalizeDiscordAllowList(params.allowlist, ["discord:", "user:"]);
     if (!list) return false;
     return allowListMatches(list, {
       id: params.userId,

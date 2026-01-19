@@ -107,20 +107,18 @@ const launchCalls = vi.hoisted(() => [] as Array<{ port: number }>);
 vi.mock("./chrome.js", () => ({
   isChromeCdpReady: vi.fn(async () => reachable),
   isChromeReachable: vi.fn(async () => reachable),
-  launchClawdChrome: vi.fn(
-    async (_resolved: unknown, profile: { cdpPort: number }) => {
-      launchCalls.push({ port: profile.cdpPort });
-      reachable = true;
-      return {
-        pid: 123,
-        exe: { kind: "chrome", path: "/fake/chrome" },
-        userDataDir: "/tmp/clawd",
-        cdpPort: profile.cdpPort,
-        startedAt: Date.now(),
-        proc,
-      };
-    },
-  ),
+  launchClawdChrome: vi.fn(async (_resolved: unknown, profile: { cdpPort: number }) => {
+    launchCalls.push({ port: profile.cdpPort });
+    reachable = true;
+    return {
+      pid: 123,
+      exe: { kind: "chrome", path: "/fake/chrome" },
+      userDataDir: "/tmp/clawd",
+      cdpPort: profile.cdpPort,
+      startedAt: Date.now(),
+      proc,
+    };
+  }),
   resolveClawdUserDataDir: vi.fn(() => "/tmp/clawd"),
   stopClawdChrome: vi.fn(async () => {
     reachable = false;
@@ -131,6 +129,12 @@ vi.mock("./cdp.js", () => ({
   createTargetViaCdp: cdpMocks.createTargetViaCdp,
   normalizeCdpWsUrl: vi.fn((wsUrl: string) => wsUrl),
   snapshotAria: cdpMocks.snapshotAria,
+  getHeadersWithAuth: vi.fn(() => ({})),
+  appendCdpPath: vi.fn((cdpUrl: string, path: string) => {
+    const base = cdpUrl.replace(/\/$/, "");
+    const suffix = path.startsWith("/") ? path : `/${path}`;
+    return `${base}${suffix}`;
+  }),
 }));
 
 vi.mock("./pw-ai.js", () => pwMocks);
@@ -269,9 +273,9 @@ describe("browser control server", () => {
   it("agent contract: snapshot endpoints", async () => {
     const base = await startServerAndBase();
 
-    const snapAria = (await realFetch(
-      `${base}/snapshot?format=aria&limit=1`,
-    ).then((r) => r.json())) as { ok: boolean; format?: string };
+    const snapAria = (await realFetch(`${base}/snapshot?format=aria&limit=1`).then((r) =>
+      r.json(),
+    )) as { ok: boolean; format?: string };
     expect(snapAria.ok).toBe(true);
     expect(snapAria.format).toBe("aria");
     expect(cdpMocks.snapshotAria).toHaveBeenCalledWith({
@@ -279,9 +283,10 @@ describe("browser control server", () => {
       limit: 1,
     });
 
-    const snapAi = (await realFetch(`${base}/snapshot?format=ai`).then((r) =>
-      r.json(),
-    )) as { ok: boolean; format?: string };
+    const snapAi = (await realFetch(`${base}/snapshot?format=ai`).then((r) => r.json())) as {
+      ok: boolean;
+      format?: string;
+    };
     expect(snapAi.ok).toBe(true);
     expect(snapAi.format).toBe("ai");
     expect(pwMocks.snapshotAiViaPlaywright).toHaveBeenCalledWith({

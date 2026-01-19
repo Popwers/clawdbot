@@ -76,7 +76,7 @@ describe("control UI routing", () => {
     await app.updateComplete;
 
     const link = app.querySelector<HTMLAnchorElement>(
-      'a.nav-item[href="/connections"]',
+      'a.nav-item[href="/channels"]',
     );
     expect(link).not.toBeNull();
     link?.dispatchEvent(
@@ -84,8 +84,8 @@ describe("control UI routing", () => {
     );
 
     await app.updateComplete;
-    expect(app.tab).toBe("connections");
-    expect(window.location.pathname).toBe("/connections");
+    expect(app.tab).toBe("channels");
+    expect(window.location.pathname).toBe("/channels");
   });
 
   it("keeps chat and nav usable on narrow viewports", async () => {
@@ -167,7 +167,7 @@ describe("control UI routing", () => {
     expect(window.location.search).toBe("");
   });
 
-  it("strips auth params even when settings already set", async () => {
+  it("hydrates token from URL params even when settings already set", async () => {
     localStorage.setItem(
       "clawdbot.control.settings.v1",
       JSON.stringify({ token: "existing-token" }),
@@ -175,7 +175,7 @@ describe("control UI routing", () => {
     const app = mountApp("/ui/overview?token=abc123");
     await app.updateComplete;
 
-    expect(app.settings.token).toBe("existing-token");
+    expect(app.settings.token).toBe("abc123");
     expect(window.location.pathname).toBe("/ui/overview");
     expect(window.location.search).toBe("");
   });

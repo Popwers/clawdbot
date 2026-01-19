@@ -1,12 +1,17 @@
 # Repository Guidelines
 - Repo: https://github.com/clawdbot/clawdbot
-- GitHub issues: use literal multiline strings or $'...' for newlines; avoid "\\n" escapes in `gh issue create/edit`.
+- GitHub issues/comments/PR comments: use literal multiline strings or `-F - <<'EOF'` (or $'...') for real newlines; never embed "\\n".
 
 ## Project Structure & Module Organization
 - Source code: `src/` (CLI wiring in `src/cli`, commands in `src/commands`, web provider in `src/provider-web.ts`, infra in `src/infra`, media pipeline in `src/media`).
 - Tests: colocated `*.test.ts`.
 - Docs: `docs/` (images, queue, Pi config). Built output lives in `dist/`.
+- Plugins/extensions: live under `extensions/*` (workspace packages). Keep plugin-only deps in the extension `package.json`; do not add them to the root `package.json` unless core uses them.
 - Installers served from `https://clawd.bot/*`: live in the sibling repo `../clawd.bot` (`public/install.sh`, `public/install-cli.sh`, `public/install.ps1`).
+- Messaging channels: always consider **all** built-in + extension channels when refactoring shared logic (routing, allowlists, pairing, command gating, onboarding, docs).
+  - Core channel docs: `docs/channels/`
+  - Core channel code: `src/telegram`, `src/discord`, `src/slack`, `src/signal`, `src/imessage`, `src/web` (WhatsApp web), `src/channels`, `src/routing`
+  - Extensions (channel plugins): `extensions/*` (e.g. `extensions/msteams`, `extensions/matrix`, `extensions/zalo`, `extensions/zalouser`, `extensions/voice-call`)
 
 ## Docs Linking (Mintlify)
 - Docs are hosted on Mintlify (docs.clawd.bot).
@@ -25,12 +30,12 @@
 - Run CLI in dev: `pnpm clawdbot ...` (bun) or `pnpm dev`.
 - Node remains supported for running built output (`dist/*`) and production installs.
 - Type-check/build: `pnpm build` (tsc)
-- Lint/format: `pnpm lint` (biome check), `pnpm format` (biome format)
+- Lint/format: `pnpm lint` (oxlint), `pnpm format` (oxfmt)
 - Tests: `pnpm test` (vitest); coverage: `pnpm test:coverage`
 
 ## Coding Style & Naming Conventions
 - Language: TypeScript (ESM). Prefer strict typing; avoid `any`.
-- Formatting/linting via Biome; run `pnpm lint` before commits.
+- Formatting/linting via Oxlint and Oxfmt; run `pnpm lint` before commits.
 - Add brief code comments for tricky or non-obvious logic.
 - Keep files concise; extract helpers instead of “V2” copies. Use existing patterns for CLI options and dependency injection via `createDefaultDeps`.
 - Aim to keep files under ~700 LOC; guideline only (not a hard guardrail). Split/refactor when it improves clarity or testability.
@@ -53,11 +58,15 @@
 - PRs should summarize scope, note testing performed, and mention any user-facing changes or new flags.
 - PR review flow: when given a PR link, review via `gh pr view`/`gh pr diff` and do **not** change branches.
 - PR merge flow: create a temp branch from `main`, merge the PR branch into it (prefer squash unless commit history is important; use rebase/merge when it is). Always try to merge the PR unless it’s truly difficult, then use another approach. If we squash, add the PR author as a co-contributor. Apply fixes, add changelog entry (include PR # + thanks), run full gate before the final commit, commit, merge back to `main`, delete the temp branch, and end on `main`.
+- If you review a PR and later do work on it, land via merge/squash (no direct-main commits) and always add the PR author as a co-contributor.
 - When working on a PR: add a changelog entry with the PR number and thank the contributor.
 - When working on an issue: reference the issue in the changelog entry.
 - When merging a PR: leave a PR comment that explains exactly what we did and include the SHA hashes.
 - When merging a PR from a new contributor: add their avatar to the README “Thanks to all clawtributors” thumbnail list.
 - After merging a PR: run `bun scripts/update-clawtributors.ts` if the contributor is missing, then commit the regenerated README.
+
+## Shorthand Commands
+- `sync`: if working tree is dirty, commit all changes (pick a sensible Conventional Commit message), then `git pull --rebase`; if rebase conflicts and cannot resolve, stop; otherwise `git push`.
 
 ### PR Workflow (Review vs Land)
 - **Review mode (PR link only):** read `gh pr view/diff`; **do not** switch branches; **do not** change code.
@@ -68,15 +77,19 @@
 - Pi sessions live under `~/.clawdbot/sessions/` by default; the base directory is not configurable.
 - Environment variables: see `~/.profile`.
 - Never commit or publish real phone numbers, videos, or live configuration values. Use obviously fake placeholders in docs, tests, and examples.
+ - Release flow: always read `docs/reference/RELEASING.md` and `docs/platforms/mac/release.md` before any release work; do not ask routine questions once those docs answer them.
 
 ## Troubleshooting
-- Rebrand/migration issues (Clawdis → Clawdbot) or legacy config/service warnings: run `clawdbot doctor` (see `docs/gateway/doctor.md`).
+- Rebrand/migration issues or legacy config/service warnings: run `clawdbot doctor` (see `docs/gateway/doctor.md`).
 
 ## Agent-Specific Notes
 - Vocabulary: "makeup" = "mac app".
+- Never edit `node_modules` (global/Homebrew/npm/git installs too). Updates overwrite. Skill notes go in `tools.md` or `AGENTS.md`.
+- When working on a GitHub Issue or PR, print the full URL at the end of the task.
 - When answering questions, respond with high-confidence answers only: verify in code; do not guess.
 - Never update the Carbon dependency.
 - Any dependency with `pnpm.patchedDependencies` must use an exact version (no `^`/`~`).
+- Patching dependencies (pnpm patches, overrides, or vendored changes) requires explicit approval; do not do this by default.
 - CLI progress: use `src/cli/progress.ts` (`osc-progress` + `@clack/prompts` spinner); don’t hand-roll spinners/bars.
 - Status output: keep tables + ANSI-safe wrapping (`src/terminal/table.ts`); `status --all` = read-only/pasteable, `status --deep` = probes.
 - Gateway currently runs only as the menubar app; there is no separate LaunchAgent/helper label installed. Restart via the Clawdbot Mac app or `scripts/restart-mac.sh`; to verify/kill use `launchctl print gui/$UID | grep clawdbot` rather than assuming a fixed label. **When debugging on macOS, start/stop the gateway via the app, not ad-hoc tmux sessions; kill any temporary tunnels before handoff.**
@@ -102,27 +115,20 @@
 - Bug investigations: read source code of relevant npm dependencies and all related local code before concluding; aim for high-confidence root cause.
 - Code style: add brief comments for tricky logic; keep files under ~500 LOC when feasible (split/refactor as needed).
 - Tool schema guardrails (google-antigravity): avoid `Type.Union` in tool input schemas; no `anyOf`/`oneOf`/`allOf`. Use `stringEnum`/`optionalStringEnum` (Type.Unsafe enum) for string lists, and `Type.Optional(...)` instead of `... | null`. Keep top-level tool schema as `type: "object"` with `properties`.
-- When asked to open a “session” file, open the Pi session logs under `~/.clawdbot/agents/main/sessions/*.jsonl` (newest unless a specific ID is given), not the default `sessions.json`. If logs are needed from another machine, SSH via Tailscale and read the same path there.
-- Menubar dimming + restart flow mirrors Trimmy: use `scripts/restart-mac.sh` (kills all Clawdbot variants, runs `swift build`, packages, relaunches). Icon dimming depends on MenuBarExtraAccess wiring in AppMain; keep `appearsDisabled` updates intact when touching the status item.
+- Tool schema guardrails: avoid raw `format` property names in tool schemas; some validators treat `format` as a reserved keyword and reject the schema.
+- When asked to open a “session” file, open the Pi session logs under `~/.clawdbot/agents/<agentId>/sessions/*.jsonl` (use the `agent=<id>` value in the Runtime line of the system prompt; newest unless a specific ID is given), not the default `sessions.json`. If logs are needed from another machine, SSH via Tailscale and read the same path there.
 - Do not rebuild the macOS app over SSH; rebuilds must be run directly on the Mac.
 - Never send streaming/partial replies to external messaging surfaces (WhatsApp, Telegram); only final replies should be delivered there. Streaming/tool events may still go to internal UIs/control channel.
 - Voice wake forwarding tips:
   - Command template should stay `clawdbot-mac agent --message "${text}" --thinking low`; `VoiceWakeForwarder` already shell-escapes `${text}`. Don’t add extra quotes.
   - launchd PATH is minimal; ensure the app’s launch agent PATH includes standard system paths plus your pnpm bin (typically `$HOME/Library/pnpm`) so `pnpm`/`clawdbot` binaries resolve when invoked via `clawdbot-mac`.
 - For manual `clawdbot message send` messages that include `!`, use the heredoc pattern noted below to avoid the Bash tool’s escaping.
+- Release guardrails: do not change version numbers without operator’s explicit consent; always ask permission before running any npm publish/release step.
 
-## Exclamation Mark Escaping Workaround
-The Claude Code Bash tool escapes `!` to `\\!` in command arguments. When using `clawdbot message send` with messages containing exclamation marks, use heredoc syntax:
-
-```bash
-# WRONG - will send "Hello\\!" with backslash
-clawdbot message send --to "+1234" --message 'Hello!'
-
-# CORRECT - use heredoc to avoid escaping
-clawdbot message send --to "+1234" --message "$(cat <<'EOF'
-Hello!
-EOF
-)"
-```
-
-This is a Claude Code quirk, not a clawdbot bug.
+## NPM + 1Password (publish/verify)
+- Use the 1password skill; all `op` commands must run inside a fresh tmux session.
+- Sign in: `eval "$(op signin --account my.1password.com)"` (app unlocked + integration on).
+- OTP: `op read 'op://Private/Npmjs/one-time password?attribute=otp'`.
+- Publish: `npm publish --access public --otp="<otp>"` (run from the package dir).
+- Verify without local npmrc side effects: `npm view <pkg> version --userconfig "$(mktemp)"`.
+- Kill the tmux session after publish.

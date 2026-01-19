@@ -3,9 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { DisconnectReason } from "@whiskeysockets/baileys";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-vi.useFakeTimers();
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const rmMock = vi.spyOn(fs, "rm");
 
@@ -46,15 +44,17 @@ vi.mock("./session.js", () => {
   };
 });
 
-const { createWaSocket, waitForWaConnection, formatError } = await import(
-  "./session.js"
-);
+const { createWaSocket, waitForWaConnection, formatError } = await import("./session.js");
 const { loginWeb } = await import("./login.js");
 
 describe("loginWeb coverage", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     vi.clearAllMocks();
     rmMock.mockClear();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("restarts once when WhatsApp requests code 515", async () => {
@@ -78,9 +78,7 @@ describe("loginWeb coverage", () => {
       output: { statusCode: DisconnectReason.loggedOut },
     });
 
-    await expect(loginWeb(false, waitForWaConnection as never)).rejects.toThrow(
-      /cache cleared/i,
-    );
+    await expect(loginWeb(false, waitForWaConnection as never)).rejects.toThrow(/cache cleared/i);
     expect(rmMock).toHaveBeenCalledWith(authDir, {
       recursive: true,
       force: true,

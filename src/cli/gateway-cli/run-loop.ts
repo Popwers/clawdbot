@@ -1,5 +1,9 @@
 import type { startGatewayServer } from "../../gateway/server.js";
-import { createSubsystemLogger } from "../../logging.js";
+import {
+  consumeGatewaySigusr1RestartAuthorization,
+  isGatewaySigusr1RestartExternallyAllowed,
+} from "../../infra/restart.js";
+import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { defaultRuntime } from "../../runtime.js";
 
 const gatewayLog = createSubsystemLogger("gateway");
@@ -27,9 +31,7 @@ export async function runGatewayLoop(params: {
     }
     shuttingDown = true;
     const isRestart = action === "restart";
-    gatewayLog.info(
-      `received ${signal}; ${isRestart ? "restarting" : "shutting down"}`,
-    );
+    gatewayLog.info(`received ${signal}; ${isRestart ? "restarting" : "shutting down"}`);
 
     const forceExitTimer = setTimeout(() => {
       gatewayLog.error("shutdown timed out; exiting without full cleanup");
@@ -69,6 +71,13 @@ export async function runGatewayLoop(params: {
   };
   const onSigusr1 = () => {
     gatewayLog.info("signal SIGUSR1 received");
+    const authorized = consumeGatewaySigusr1RestartAuthorization();
+    if (!authorized && !isGatewaySigusr1RestartExternallyAllowed()) {
+      gatewayLog.warn(
+        "SIGUSR1 restart ignored (not authorized; enable commands.restart or use gateway tool).",
+      );
+      return;
+    }
     request("restart", "SIGUSR1");
   };
 

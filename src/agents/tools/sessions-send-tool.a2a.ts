@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 
 import { callGateway } from "../../gateway/call.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import { createSubsystemLogger } from "../../logging.js";
+import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { GatewayMessageChannel } from "../../utils/message-channel.js";
 import { AGENT_LANE_NESTED } from "../lanes.js";
 import { readLatestAssistantReply, runAgentStep } from "./agent-step.js";
@@ -66,9 +66,7 @@ export async function runSessionsSendA2AFlow(params: {
       let incomingMessage = latestReply;
       for (let turn = 1; turn <= params.maxPingPongTurns; turn += 1) {
         const currentRole =
-          currentSessionKey === params.requesterSessionKey
-            ? "requester"
-            : "target";
+          currentSessionKey === params.requesterSessionKey ? "requester" : "target";
         const replyPrompt = buildAgentToAgentReplyContext({
           requesterSessionKey: params.requesterSessionKey,
           requesterChannel: params.requesterChannel,
@@ -112,12 +110,7 @@ export async function runSessionsSendA2AFlow(params: {
       timeoutMs: params.announceTimeoutMs,
       lane: AGENT_LANE_NESTED,
     });
-    if (
-      announceTarget &&
-      announceReply &&
-      announceReply.trim() &&
-      !isAnnounceSkip(announceReply)
-    ) {
+    if (announceTarget && announceReply && announceReply.trim() && !isAnnounceSkip(announceReply)) {
       try {
         await callGateway({
           method: "send",

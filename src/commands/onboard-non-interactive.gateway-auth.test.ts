@@ -3,15 +3,12 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 
 import { PROTOCOL_VERSION } from "../gateway/protocol/index.js";
 import { rawDataToString } from "../infra/ws.js";
-import {
-  GATEWAY_CLIENT_MODES,
-  GATEWAY_CLIENT_NAMES,
-} from "../utils/message-channel.js";
+import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 
 async function getFreePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -113,12 +110,11 @@ describe("onboard (non-interactive): gateway auth", () => {
     process.env.CLAWDBOT_SKIP_CANVAS_HOST = "1";
     delete process.env.CLAWDBOT_GATEWAY_TOKEN;
 
-    const tempHome = await fs.mkdtemp(
-      path.join(os.tmpdir(), "clawdbot-onboard-noninteractive-"),
-    );
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "clawdbot-onboard-noninteractive-"));
     process.env.HOME = tempHome;
     delete process.env.CLAWDBOT_STATE_DIR;
     delete process.env.CLAWDBOT_CONFIG_PATH;
+    vi.resetModules();
 
     const token = "tok_test_123";
     const workspace = path.join(tempHome, "clawd");
@@ -133,9 +129,7 @@ describe("onboard (non-interactive): gateway auth", () => {
       },
     };
 
-    const { runNonInteractiveOnboarding } = await import(
-      "./onboard-non-interactive.js"
-    );
+    const { runNonInteractiveOnboarding } = await import("./onboard-non-interactive.js");
     await runNonInteractiveOnboarding(
       {
         nonInteractive: true,

@@ -40,6 +40,9 @@ run on host, set an explicit per-agent override:
 
 - Node `>=22`
 - `pnpm` (optional; recommended if you build from source)
+- **Recommended:** Brave Search API key for web search. Easiest path:
+  `clawdbot configure --section web` (stores `tools.web.search.apiKey`).
+  See [Web tools](/tools/web).
 
 macOS: if you plan to build the apps, install Xcode / CLT. For the CLI + gateway only, Node is enough.
 Windows: use **WSL2** (Ubuntu recommended). WSL2 is strongly recommended; native Windows is untested and more problematic. Install WSL2 first, then run the Linux steps inside WSL. See [Windows (WSL2)](/platforms/windows).
@@ -171,7 +174,7 @@ In a new terminal:
 ```bash
 clawdbot status
 clawdbot health
-clawdbot message send --to +15555550123 --message "Hello from Clawdbot"
+clawdbot message send --target +15555550123 --message "Hello from Clawdbot"
 ```
 
 If `health` shows “no auth configured”, go back to the wizard and set OAuth/key auth — the agent won’t be able to respond without it.
@@ -184,3 +187,4 @@ Health probes: `clawdbot health` (or `clawdbot status --deep`) asks the running 
 - macOS menu bar app + voice wake: [macOS app](/platforms/macos)
 - iOS/Android nodes (Canvas/camera/voice): [Nodes](/nodes)
 - Remote access (SSH tunnel / Tailscale Serve): [Remote access](/gateway/remote) and [Tailscale](/gateway/tailscale)
+- Always-on / VPN setups: [Remote access](/gateway/remote), [exe.dev](/platforms/exe-dev), [Hetzner](/platforms/hetzner), [macOS remote](/platforms/mac/remote)

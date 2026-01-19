@@ -1,16 +1,6 @@
-import {
-  CHAT_CHANNEL_ORDER,
-  type ChatChannelId,
-  normalizeChatChannelId,
-} from "../registry.js";
-import { discordPlugin } from "./discord.js";
-import { imessagePlugin } from "./imessage.js";
-import { msteamsPlugin } from "./msteams.js";
-import { signalPlugin } from "./signal.js";
-import { slackPlugin } from "./slack.js";
-import { telegramPlugin } from "./telegram.js";
+import { CHAT_CHANNEL_ORDER, type ChatChannelId, normalizeAnyChannelId } from "../registry.js";
 import type { ChannelId, ChannelPlugin } from "./types.js";
-import { whatsappPlugin } from "./whatsapp.js";
+import { requireActivePluginRegistry } from "../../plugins/runtime.js";
 
 // Channel plugins registry (runtime).
 //
@@ -18,24 +8,27 @@ import { whatsappPlugin } from "./whatsapp.js";
 // Shared code paths (reply flow, command auth, sandbox explain) should depend on `src/channels/dock.ts`
 // instead, and only call `getChannelPlugin()` at execution boundaries.
 //
-// Adding a channel:
-// - add `<id>Plugin` import + entry in `resolveChannels()`
-// - add an entry to `src/channels/dock.ts` for shared behavior (capabilities, allowFrom, threading, …)
-// - add ids/aliases in `src/channels/registry.ts`
-function resolveChannels(): ChannelPlugin[] {
-  return [
-    telegramPlugin,
-    whatsappPlugin,
-    discordPlugin,
-    slackPlugin,
-    signalPlugin,
-    imessagePlugin,
-    msteamsPlugin,
-  ];
+// Channel plugins are registered by the plugin loader (extensions/ or configured paths).
+function listPluginChannels(): ChannelPlugin[] {
+  const registry = requireActivePluginRegistry();
+  return registry.channels.map((entry) => entry.plugin);
+}
+
+function dedupeChannels(channels: ChannelPlugin[]): ChannelPlugin[] {
+  const seen = new Set<string>();
+  const resolved: ChannelPlugin[] = [];
+  for (const plugin of channels) {
+    const id = String(plugin.id).trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    resolved.push(plugin);
+  }
+  return resolved;
 }
 
 export function listChannelPlugins(): ChannelPlugin[] {
-  return resolveChannels().sort((a, b) => {
+  const combined = dedupeChannels(listPluginChannels());
+  return combined.sort((a, b) => {
     const indexA = CHAT_CHANNEL_ORDER.indexOf(a.id as ChatChannelId);
     const indexB = CHAT_CHANNEL_ORDER.indexOf(b.id as ChatChannelId);
     const orderA = a.meta.order ?? (indexA === -1 ? 999 : indexA);
@@ -46,22 +39,38 @@ export function listChannelPlugins(): ChannelPlugin[] {
 }
 
 export function getChannelPlugin(id: ChannelId): ChannelPlugin | undefined {
-  return resolveChannels().find((plugin) => plugin.id === id);
+  const resolvedId = String(id).trim();
+  if (!resolvedId) return undefined;
+  return listChannelPlugins().find((plugin) => plugin.id === resolvedId);
 }
 
 export function normalizeChannelId(raw?: string | null): ChannelId | null {
-  // Channel docking: keep input normalization centralized in src/channels/registry.ts
-  // so CLI/API/protocol can rely on stable aliases without plugin init side effects.
-  return normalizeChatChannelId(raw);
+  // Channel docking: keep input normalization centralized in src/channels/registry.ts.
+  // Plugin registry must be initialized before calling.
+  return normalizeAnyChannelId(raw);
 }
-
 export {
-  discordPlugin,
-  imessagePlugin,
-  msteamsPlugin,
-  signalPlugin,
-  slackPlugin,
-  telegramPlugin,
-  whatsappPlugin,
-};
+  listDiscordDirectoryGroupsFromConfig,
+  listDiscordDirectoryPeersFromConfig,
+  listSlackDirectoryGroupsFromConfig,
+  listSlackDirectoryPeersFromConfig,
+  listTelegramDirectoryGroupsFromConfig,
+  listTelegramDirectoryPeersFromConfig,
+  listWhatsAppDirectoryGroupsFromConfig,
+  listWhatsAppDirectoryPeersFromConfig,
+} from "./directory-config.js";
+export {
+  buildChannelKeyCandidates,
+  normalizeChannelSlug,
+  resolveChannelEntryMatch,
+  resolveChannelEntryMatchWithFallback,
+  resolveNestedAllowlistDecision,
+  type ChannelEntryMatch,
+  type ChannelMatchSource,
+} from "./channel-config.js";
+export {
+  formatAllowlistMatchMeta,
+  type AllowlistMatch,
+  type AllowlistMatchSource,
+} from "./allowlist-match.js";
 export type { ChannelId, ChannelPlugin } from "./types.js";

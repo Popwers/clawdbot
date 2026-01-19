@@ -6,10 +6,7 @@ import {
   warnIfModelConfigLooksOff,
 } from "../commands/auth-choice.js";
 import { promptAuthChoiceGrouped } from "../commands/auth-choice-prompt.js";
-import {
-  applyPrimaryModel,
-  promptDefaultModel,
-} from "../commands/model-picker.js";
+import { applyPrimaryModel, promptDefaultModel } from "../commands/model-picker.js";
 import { setupChannels } from "../commands/onboard-channels.js";
 import {
   applyWizardMetadata,
@@ -22,6 +19,7 @@ import {
 } from "../commands/onboard-helpers.js";
 import { promptRemoteGatewayConfig } from "../commands/onboard-remote.js";
 import { setupSkills } from "../commands/onboard-skills.js";
+import { setupInternalHooks } from "../commands/onboard-hooks.js";
 import type {
   GatewayAuthChoice,
   OnboardMode,
@@ -41,11 +39,35 @@ import { defaultRuntime } from "../runtime.js";
 import { resolveUserPath } from "../utils.js";
 import { finalizeOnboardingWizard } from "./onboarding.finalize.js";
 import { configureGatewayForOnboarding } from "./onboarding.gateway-config.js";
-import type {
-  QuickstartGatewayDefaults,
-  WizardFlow,
-} from "./onboarding.types.js";
-import type { WizardPrompter } from "./prompts.js";
+import type { QuickstartGatewayDefaults, WizardFlow } from "./onboarding.types.js";
+import { WizardCancelledError, type WizardPrompter } from "./prompts.js";
+
+async function requireRiskAcknowledgement(params: {
+  opts: OnboardOptions;
+  prompter: WizardPrompter;
+}) {
+  if (params.opts.acceptRisk === true) return;
+
+  await params.prompter.note(
+    [
+      "Please read: https://docs.clawd.bot/security",
+      "",
+      "Clawdbot agents can run commands, read/write files, and act through any tools you enable. They can only send messages on channels you configure (for example, an account you log in on this machine, or a bot account like Slack/Discord).",
+      "",
+      "If you’re new to this, start with the sandbox and least privilege. It helps limit what an agent can do if it’s tricked or makes a mistake.",
+      "Learn more: https://docs.clawd.bot/sandboxing",
+    ].join("\n"),
+    "Security",
+  );
+
+  const ok = await params.prompter.confirm({
+    message: "I understand this is powerful and inherently risky. Continue?",
+    initialValue: false,
+  });
+  if (!ok) {
+    throw new WizardCancelledError("risk not accepted");
+  }
+}
 
 export async function runOnboardingWizard(
   opts: OnboardOptions,
@@ -54,14 +76,13 @@ export async function runOnboardingWizard(
 ) {
   printWizardHeader(runtime);
   await prompter.intro("Clawdbot onboarding");
+  await requireRiskAcknowledgement({ opts, prompter });
 
   const snapshot = await readConfigFileSnapshot();
   let baseConfig: ClawdbotConfig = snapshot.valid ? snapshot.config : {};
 
   if (snapshot.exists) {
-    const title = snapshot.valid
-      ? "Existing config detected"
-      : "Invalid config";
+    const title = snapshot.valid ? "Existing config detected" : "Invalid config";
     await prompter.note(summarizeExistingConfig(baseConfig), title);
     if (!snapshot.valid && snapshot.issues.length > 0) {
       await prompter.note(
@@ -92,8 +113,7 @@ export async function runOnboardingWizard(
     })) as "keep" | "modify" | "reset";
 
     if (action === "reset") {
-      const workspaceDefault =
-        baseConfig.agents?.defaults?.workspace ?? DEFAULT_WORKSPACE;
+      const workspaceDefault = baseConfig.agents?.defaults?.workspace ?? DEFAULT_WORKSPACE;
       const resetScope = (await prompter.select({
         message: "Reset scope",
         options: [
@@ -116,11 +136,7 @@ export async function runOnboardingWizard(
   const quickstartHint = "Configure details later via clawdbot configure.";
   const advancedHint = "Configure port, network, Tailscale, and auth options.";
   const explicitFlowRaw = opts.flow?.trim();
-  if (
-    explicitFlowRaw &&
-    explicitFlowRaw !== "quickstart" &&
-    explicitFlowRaw !== "advanced"
-  ) {
+  if (explicitFlowRaw && explicitFlowRaw !== "quickstart" && explicitFlowRaw !== "advanced") {
     runtime.error("Invalid --flow (use quickstart or advanced).");
     runtime.exit(1);
     return;
@@ -160,10 +176,7 @@ export async function runOnboardingWizard(
 
     const bindRaw = baseConfig.gateway?.bind;
     const bind =
-      bindRaw === "loopback" ||
-      bindRaw === "lan" ||
-      bindRaw === "auto" ||
-      bindRaw === "custom"
+      bindRaw === "loopback" || bindRaw === "lan" || bindRaw === "auto" || bindRaw === "custom"
         ? bindRaw
         : "loopback";
 
@@ -181,9 +194,7 @@ export async function runOnboardingWizard(
 
     const tailscaleRaw = baseConfig.gateway?.tailscale?.mode;
     const tailscaleMode =
-      tailscaleRaw === "off" ||
-      tailscaleRaw === "serve" ||
-      tailscaleRaw === "funnel"
+      tailscaleRaw === "off" || tailscaleRaw === "serve" || tailscaleRaw === "funnel"
         ? tailscaleRaw
         : "off";
 
@@ -222,14 +233,11 @@ export async function runOnboardingWizard(
           "Keeping your current gateway settings:",
           `Gateway port: ${quickstartGateway.port}`,
           `Gateway bind: ${formatBind(quickstartGateway.bind)}`,
-          ...(quickstartGateway.bind === "custom" &&
-          quickstartGateway.customBindHost
+          ...(quickstartGateway.bind === "custom" && quickstartGateway.customBindHost
             ? [`Gateway custom IP: ${quickstartGateway.customBindHost}`]
             : []),
           `Gateway auth: ${formatAuth(quickstartGateway.authMode)}`,
-          `Tailscale exposure: ${formatTailscale(
-            quickstartGateway.tailscaleMode,
-          )}`,
+          `Tailscale exposure: ${formatTailscale(quickstartGateway.tailscaleMode)}`,
           "Direct to chat channels.",
         ]
       : [
@@ -246,11 +254,8 @@ export async function runOnboardingWizard(
   const localUrl = `ws://127.0.0.1:${localPort}`;
   const localProbe = await probeGatewayReachable({
     url: localUrl,
-    token:
-      baseConfig.gateway?.auth?.token ?? process.env.CLAWDBOT_GATEWAY_TOKEN,
-    password:
-      baseConfig.gateway?.auth?.password ??
-      process.env.CLAWDBOT_GATEWAY_PASSWORD,
+    token: baseConfig.gateway?.auth?.token ?? process.env.CLAWDBOT_GATEWAY_TOKEN,
+    password: baseConfig.gateway?.auth?.password ?? process.env.CLAWDBOT_GATEWAY_PASSWORD,
   });
   const remoteUrl = baseConfig.gateway?.remote?.url?.trim() ?? "";
   const remoteProbe = remoteUrl
@@ -301,13 +306,10 @@ export async function runOnboardingWizard(
       ? (baseConfig.agents?.defaults?.workspace ?? DEFAULT_WORKSPACE)
       : await prompter.text({
           message: "Workspace directory",
-          initialValue:
-            baseConfig.agents?.defaults?.workspace ?? DEFAULT_WORKSPACE,
+          initialValue: baseConfig.agents?.defaults?.workspace ?? DEFAULT_WORKSPACE,
         }));
 
-  const workspaceDir = resolveUserPath(
-    workspaceInput.trim() || DEFAULT_WORKSPACE,
-  );
+  const workspaceDir = resolveUserPath(workspaceInput.trim() || DEFAULT_WORKSPACE);
 
   let nextConfig: ClawdbotConfig = {
     ...baseConfig,
@@ -402,6 +404,10 @@ export async function runOnboardingWizard(
   } else {
     nextConfig = await setupSkills(nextConfig, workspaceDir, runtime, prompter);
   }
+
+  // Setup hooks (session memory on /new)
+  nextConfig = await setupInternalHooks(nextConfig, runtime, prompter);
+
   nextConfig = applyWizardMetadata(nextConfig, { command: "onboard", mode });
   await writeConfigFile(nextConfig);
 

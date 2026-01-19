@@ -34,7 +34,7 @@ pnpm gateway:watch
 - Pass `--verbose` to mirror debug logging (handshakes, req/res, events) from the log file into stdio when troubleshooting.
 - `--force` uses `lsof` to find listeners on the chosen port, sends SIGTERM, logs what it killed, then starts the gateway (fails fast if `lsof` is missing).
 - If you run under a supervisor (launchd/systemd/mac app child-process mode), a stop/restart typically sends **SIGTERM**; older builds may surface this as `pnpm` `ELIFECYCLE` exit code **143** (SIGTERM), which is a normal shutdown, not a crash.
-- **SIGUSR1** triggers an in-process restart (no external supervisor required). This is what the `gateway` agent tool uses.
+- **SIGUSR1** triggers an in-process restart when authorized (gateway tool/config apply/update, or enable `commands.restart` for manual restarts).
 - Gateway auth: set `gateway.auth.mode=token` + `gateway.auth.token` (or pass `--token <value>` / `CLAWDBOT_GATEWAY_TOKEN`) to require clients to send `connect.params.auth.token`.
 - The wizard now generates a token by default, even on loopback.
 - Port precedence: `--port` > `CLAWDBOT_GATEWAY_PORT` > `gateway.port` > default `18789`.
@@ -51,7 +51,7 @@ pnpm gateway:watch
 
 Usually unnecessary: one Gateway can serve multiple messaging channels and agents. Use multiple Gateways only for redundancy or strict isolation (ex: rescue bot).
 
-Supported if you isolate state + config and use unique ports.
+Supported if you isolate state + config and use unique ports. Full guide: [Multiple gateways](/gateway/multiple-gateways).
 
 Service names are profile-aware:
 - macOS: `com.clawdbot.<profile>`
@@ -62,6 +62,8 @@ Install metadata is embedded in the service config:
 - `CLAWDBOT_SERVICE_MARKER=clawdbot`
 - `CLAWDBOT_SERVICE_KIND=gateway`
 - `CLAWDBOT_SERVICE_VERSION=<version>`
+
+Rescue-Bot Pattern: keep a second Gateway isolated with its own profile, state dir, workspace, and base port spacing. Full guide: [Rescue-bot guide](/gateway/multiple-gateways#rescue-bot-guide).
 
 ### Dev profile (`--dev`)
 
@@ -205,7 +207,7 @@ Notes:
 - `daemon status` includes the last gateway error line when the service looks running but the port is closed.
 - `logs` tails the Gateway file log via RPC (no manual `tail`/`grep` needed).
 - If other gateway-like services are detected, the CLI warns unless they are Clawdbot profile services.
-  We still recommend **one gateway per machine** unless you need redundant profiles.
+  We still recommend **one gateway per machine** for most setups; use isolated profiles/ports for redundancy or a rescue bot. See [Multiple gateways](/gateway/multiple-gateways).
   - Cleanup: `clawdbot daemon uninstall` (current service) and `clawdbot doctor` (legacy migrations).
 - `daemon install` is a no-op when already installed; use `clawdbot daemon install --force` to reinstall (profile/env/path changes).
 
@@ -279,7 +281,7 @@ Windows installs should use **WSL2** and follow the Linux systemd section above.
 
 ## CLI helpers
 - `clawdbot gateway health|status` — request health/status over the Gateway WS.
-- `clawdbot message send --to <num> --message "hi" [--media ...]` — send via Gateway (idempotent for WhatsApp).
+- `clawdbot message send --target <num> --message "hi" [--media ...]` — send via Gateway (idempotent for WhatsApp).
 - `clawdbot agent --message "hi" --to <num>` — run an agent turn (waits for final by default).
 - `clawdbot gateway call <method> --params '{"k":"v"}'` — raw method invoker for debugging.
 - `clawdbot daemon stop|restart` — stop/restart the supervised gateway service (launchd/systemd).

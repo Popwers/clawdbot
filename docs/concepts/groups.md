@@ -46,6 +46,70 @@ If you want...
 - Direct chats use the main session (or per-sender if configured).
 - Heartbeats are skipped for group sessions.
 
+## Pattern: personal DMs + public groups (single agent)
+
+Yes — this works well if your “personal” traffic is **DMs** and your “public” traffic is **groups**.
+
+Why: in single-agent mode, DMs typically land in the **main** session key (`agent:main:main`), while groups always use **non-main** session keys (`agent:main:<channel>:group:<id>`). If you enable sandboxing with `mode: "non-main"`, those group sessions run in Docker while your main DM session stays on-host.
+
+This gives you one agent “brain” (shared workspace + memory), but two execution postures:
+- **DMs**: full tools (host)
+- **Groups**: sandbox + restricted tools (Docker)
+
+> If you need truly separate workspaces/personas (“personal” and “public” must never mix), use a second agent + bindings. See [Multi-Agent Routing](/concepts/multi-agent).
+
+Example (DMs on host, groups sandboxed + messaging-only tools):
+
+```json5
+{
+  agents: {
+    defaults: {
+      sandbox: {
+        mode: "non-main", // groups/channels are non-main -> sandboxed
+        scope: "session", // strongest isolation (one container per group/channel)
+        workspaceAccess: "none"
+      }
+    }
+  },
+  tools: {
+    sandbox: {
+      tools: {
+        // If allow is non-empty, everything else is blocked (deny still wins).
+        allow: ["group:messaging", "group:sessions"],
+        deny: ["group:runtime", "group:fs", "group:ui", "nodes", "cron", "gateway"]
+      }
+    }
+  }
+}
+```
+
+Want “groups can only see folder X” instead of “no host access”? Keep `workspaceAccess: "none"` and mount only allowlisted paths into the sandbox:
+
+```json5
+{
+  agents: {
+    defaults: {
+      sandbox: {
+        mode: "non-main",
+        scope: "session",
+        workspaceAccess: "none",
+        docker: {
+          binds: [
+            // hostPath:containerPath:mode
+            "~/FriendsShared:/data:ro"
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+Related:
+- Configuration keys and defaults: [Gateway configuration](/gateway/configuration#agentsdefaultssandbox)
+- Debugging why a tool is blocked: [Sandbox vs Tool Policy vs Elevated](/gateway/sandbox-vs-tool-policy-vs-elevated)
+- Bind mounts details: [Sandboxing](/gateway/sandboxing#custom-bind-mounts)
+
 ## Display labels
 - UI labels use `displayName` when available, formatted as `<channel>:<token>`.
 - `#room` is reserved for rooms/channels; group chats use `g-<slug>` (lowercase, spaces -> `-`, keep `#@+._-`).
@@ -113,6 +177,8 @@ Quick mental model (evaluation order for group messages):
 ## Mention gating (default)
 Group messages require a mention unless overridden per group. Defaults live per subsystem under `*.groups."*"`.
 
+Replying to a bot message counts as an implicit mention (when the channel supports reply metadata). This applies to Telegram, WhatsApp, Slack, Discord, and Microsoft Teams.
+
 ```json5
 {
   channels: {
@@ -155,7 +221,7 @@ Notes:
 - Per-agent override: `agents.list[].groupChat.mentionPatterns` (useful when multiple agents share a group).
 - Mention gating is only enforced when mention detection is possible (native mentions or `mentionPatterns` are configured).
 - Discord defaults live in `channels.discord.guilds."*"` (overridable per guild/channel).
-- Group history context is wrapped uniformly across channels; use `messages.groupChat.historyLimit` for the global default and `channels.<channel>.historyLimit` (or `channels.<channel>.accounts.*.historyLimit`) for overrides. Set `0` to disable.
+- Group history context is wrapped uniformly across channels and is **pending-only** (messages skipped due to mention gating); use `messages.groupChat.historyLimit` for the global default and `channels.<channel>.historyLimit` (or `channels.<channel>.accounts.*.historyLimit`) for overrides. Set `0` to disable.
 
 ## Group allowlists
 When `channels.whatsapp.groups`, `channels.telegram.groups`, or `channels.imessage.groups` is configured, the keys act as a group allowlist. Use `"*"` to allow all groups while still setting default mention behavior.

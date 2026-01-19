@@ -1,12 +1,9 @@
-import {
-  getOAuthApiKey,
-  type OAuthCredentials,
-  type OAuthProvider,
-} from "@mariozechner/pi-ai";
+import { getOAuthApiKey, type OAuthCredentials, type OAuthProvider } from "@mariozechner/pi-ai";
 import lockfile from "proper-lockfile";
 
 import type { ClawdbotConfig } from "../../config/config.js";
 import { refreshChutesTokens } from "../chutes-oauth.js";
+import { refreshQwenPortalCredentials } from "../../providers/qwen-portal-oauth.js";
 import { writeClaudeCliCredentials } from "../cli-credentials.js";
 import { AUTH_STORE_LOCK_OPTIONS, CLAUDE_CLI_PROFILE_ID } from "./constants.js";
 import { formatAuthDoctorHint } from "./doctor.js";
@@ -15,12 +12,8 @@ import { suggestOAuthProfileIdForLegacyDefault } from "./repair.js";
 import { ensureAuthProfileStore, saveAuthProfileStore } from "./store.js";
 import type { AuthProfileStore } from "./types.js";
 
-function buildOAuthApiKey(
-  provider: string,
-  credentials: OAuthCredentials,
-): string {
-  const needsProjectId =
-    provider === "google-gemini-cli" || provider === "google-antigravity";
+function buildOAuthApiKey(provider: string, credentials: OAuthCredentials): string {
+  const needsProjectId = provider === "google-gemini-cli" || provider === "google-antigravity";
   return needsProjectId
     ? JSON.stringify({
         token: credentials.access,
@@ -65,7 +58,12 @@ async function refreshOAuthTokenWithLock(params: {
             });
             return { apiKey: newCredentials.access, newCredentials };
           })()
-        : await getOAuthApiKey(cred.provider as OAuthProvider, oauthCreds);
+        : String(cred.provider) === "qwen-portal"
+          ? await (async () => {
+              const newCredentials = await refreshQwenPortalCredentials(cred);
+              return { apiKey: newCredentials.access, newCredentials };
+            })()
+          : await getOAuthApiKey(cred.provider as OAuthProvider, oauthCreds);
     if (!result) return null;
     store.profiles[params.profileId] = {
       ...cred,
@@ -74,12 +72,9 @@ async function refreshOAuthTokenWithLock(params: {
     };
     saveAuthProfileStore(store, params.agentDir);
 
-    // Sync refreshed credentials back to Claude CLI if this is the claude-cli profile
+    // Sync refreshed credentials back to Claude Code CLI if this is the claude-cli profile
     // This ensures Claude Code continues to work after ClawdBot refreshes the token
-    if (
-      params.profileId === CLAUDE_CLI_PROFILE_ID &&
-      cred.provider === "anthropic"
-    ) {
+    if (params.profileId === CLAUDE_CLI_PROFILE_ID && cred.provider === "anthropic") {
       writeClaudeCliCredentials(result.newCredentials);
     }
 

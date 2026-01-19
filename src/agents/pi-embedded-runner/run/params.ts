@@ -1,13 +1,9 @@
 import type { ImageContent } from "@mariozechner/pi-ai";
-import type {
-  ReasoningLevel,
-  ThinkLevel,
-  VerboseLevel,
-} from "../../../auto-reply/thinking.js";
+import type { ReasoningLevel, ThinkLevel, VerboseLevel } from "../../../auto-reply/thinking.js";
 import type { ClawdbotConfig } from "../../../config/config.js";
 import type { enqueueCommand } from "../../../process/command-queue.js";
-import type { ExecElevatedDefaults } from "../../bash-tools.js";
-import type { BlockReplyChunking } from "../../pi-embedded-subscribe.js";
+import type { ExecElevatedDefaults, ExecToolDefaults } from "../../bash-tools.js";
+import type { BlockReplyChunking, ToolResultFormat } from "../../pi-embedded-subscribe.js";
 import type { SkillSnapshot } from "../../skills.js";
 
 export type RunEmbeddedPiAgentParams = {
@@ -34,18 +30,19 @@ export type RunEmbeddedPiAgentParams = {
   provider?: string;
   model?: string;
   authProfileId?: string;
+  authProfileIdSource?: "auto" | "user";
   thinkLevel?: ThinkLevel;
   verboseLevel?: VerboseLevel;
   reasoningLevel?: ReasoningLevel;
+  toolResultFormat?: ToolResultFormat;
+  execOverrides?: Pick<ExecToolDefaults, "host" | "security" | "ask" | "node">;
   bashElevated?: ExecElevatedDefaults;
   timeoutMs: number;
   runId: string;
   abortSignal?: AbortSignal;
   shouldEmitToolResult?: () => boolean;
-  onPartialReply?: (payload: {
-    text?: string;
-    mediaUrls?: string[];
-  }) => void | Promise<void>;
+  shouldEmitToolOutput?: () => boolean;
+  onPartialReply?: (payload: { text?: string; mediaUrls?: string[] }) => void | Promise<void>;
   onAssistantMessageStart?: () => void | Promise<void>;
   onBlockReply?: (payload: {
     text?: string;
@@ -55,18 +52,9 @@ export type RunEmbeddedPiAgentParams = {
   onBlockReplyFlush?: () => void | Promise<void>;
   blockReplyBreak?: "text_end" | "message_end";
   blockReplyChunking?: BlockReplyChunking;
-  onReasoningStream?: (payload: {
-    text?: string;
-    mediaUrls?: string[];
-  }) => void | Promise<void>;
-  onToolResult?: (payload: {
-    text?: string;
-    mediaUrls?: string[];
-  }) => void | Promise<void>;
-  onAgentEvent?: (evt: {
-    stream: string;
-    data: Record<string, unknown>;
-  }) => void;
+  onReasoningStream?: (payload: { text?: string; mediaUrls?: string[] }) => void | Promise<void>;
+  onToolResult?: (payload: { text?: string; mediaUrls?: string[] }) => void | Promise<void>;
+  onAgentEvent?: (evt: { stream: string; data: Record<string, unknown> }) => void;
   lane?: string;
   enqueue?: typeof enqueueCommand;
   extraSystemPrompt?: string;

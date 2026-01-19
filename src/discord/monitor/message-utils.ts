@@ -44,6 +44,10 @@ const DISCORD_CHANNEL_INFO_CACHE = new Map<
   { value: DiscordChannelInfo | null; expiresAt: number }
 >();
 
+export function __resetDiscordChannelInfoCacheForTest() {
+  DISCORD_CHANNEL_INFO_CACHE.clear();
+}
+
 export async function resolveDiscordChannelInfo(
   client: Client,
   channelId: string,
@@ -64,8 +68,7 @@ export async function resolveDiscordChannelInfo(
     }
     const name = "name" in channel ? (channel.name ?? undefined) : undefined;
     const topic = "topic" in channel ? (channel.topic ?? undefined) : undefined;
-    const parentId =
-      "parentId" in channel ? (channel.parentId ?? undefined) : undefined;
+    const parentId = "parentId" in channel ? (channel.parentId ?? undefined) : undefined;
     const payload: DiscordChannelInfo = {
       type: channel.type,
       name,
@@ -113,9 +116,7 @@ export async function resolveMediaList(
       });
     } catch (err) {
       const id = attachment.id ?? attachment.url;
-      logVerbose(
-        `discord: failed to download attachment ${id}: ${String(err)}`,
-      );
+      logVerbose(`discord: failed to download attachment ${id}: ${String(err)}`);
     }
   }
   return out;
@@ -137,9 +138,7 @@ function isImageAttachment(attachment: APIAttachment): boolean {
   return /\.(avif|bmp|gif|heic|heif|jpe?g|png|tiff?|webp)$/.test(name);
 }
 
-function buildDiscordAttachmentPlaceholder(
-  attachments?: APIAttachment[],
-): string {
+function buildDiscordAttachmentPlaceholder(attachments?: APIAttachment[]): string {
   if (!attachments || attachments.length === 0) return "";
   const count = attachments.length;
   const allImages = attachments.every(isImageAttachment);
@@ -186,29 +185,21 @@ function resolveDiscordForwardedMessagesText(message: Message): string {
   return forwardedBlocks.join("\n\n");
 }
 
-function resolveDiscordMessageSnapshots(
-  message: Message,
-): DiscordMessageSnapshot[] {
-  const rawData = (message as { rawData?: { message_snapshots?: unknown } })
-    .rawData;
+function resolveDiscordMessageSnapshots(message: Message): DiscordMessageSnapshot[] {
+  const rawData = (message as { rawData?: { message_snapshots?: unknown } }).rawData;
   const snapshots =
     rawData?.message_snapshots ??
     (message as { message_snapshots?: unknown }).message_snapshots ??
     (message as { messageSnapshots?: unknown }).messageSnapshots;
   if (!Array.isArray(snapshots)) return [];
   return snapshots.filter(
-    (entry): entry is DiscordMessageSnapshot =>
-      Boolean(entry) && typeof entry === "object",
+    (entry): entry is DiscordMessageSnapshot => Boolean(entry) && typeof entry === "object",
   );
 }
 
-function resolveDiscordSnapshotMessageText(
-  snapshot: DiscordSnapshotMessage,
-): string {
+function resolveDiscordSnapshotMessageText(snapshot: DiscordSnapshotMessage): string {
   const content = snapshot.content?.trim() ?? "";
-  const attachmentText = buildDiscordAttachmentPlaceholder(
-    snapshot.attachments ?? undefined,
-  );
+  const attachmentText = buildDiscordAttachmentPlaceholder(snapshot.attachments ?? undefined);
   const embed = snapshot.embeds?.[0];
   const embedText = embed?.description?.trim() || embed?.title?.trim() || "";
   return content || attachmentText || embedText || "";
@@ -243,9 +234,7 @@ export function buildDiscordMediaPayload(
 } {
   const first = mediaList[0];
   const mediaPaths = mediaList.map((media) => media.path);
-  const mediaTypes = mediaList
-    .map((media) => media.contentType)
-    .filter(Boolean) as string[];
+  const mediaTypes = mediaList.map((media) => media.contentType).filter(Boolean) as string[];
   return {
     MediaPath: first?.path,
     MediaType: first?.contentType,

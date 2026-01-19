@@ -1,8 +1,12 @@
 export {
   type BrowserConsoleMessage,
+  closePageByTargetIdViaPlaywright,
   closePlaywrightBrowserConnection,
+  createPageViaPlaywright,
   ensurePageState,
+  focusPageByTargetIdViaPlaywright,
   getPageForTargetId,
+  listPagesViaPlaywright,
   refLocator,
   type WithSnapshotForAI,
 } from "./pw-session.js";
@@ -41,7 +45,9 @@ export {
   setOfflineViaPlaywright,
   setTimezoneViaPlaywright,
   snapshotAiViaPlaywright,
+  snapshotAriaViaPlaywright,
   snapshotRoleViaPlaywright,
+  screenshotWithLabelsViaPlaywright,
   storageClearViaPlaywright,
   storageGetViaPlaywright,
   storageSetViaPlaywright,

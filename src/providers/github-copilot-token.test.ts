@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const loadJsonFile = vi.fn();
 const saveJsonFile = vi.fn();
@@ -14,17 +14,23 @@ vi.mock("../config/paths.js", () => ({
 }));
 
 describe("github-copilot token", () => {
-  it("derives baseUrl from token", async () => {
-    const { deriveCopilotApiBaseUrlFromToken } = await import(
-      "./github-copilot-token.js"
-    );
+  beforeEach(() => {
+    vi.resetModules();
+    loadJsonFile.mockReset();
+    saveJsonFile.mockReset();
+    resolveStateDir.mockReset();
+    resolveStateDir.mockReturnValue("/tmp/clawdbot-state");
+  });
 
-    expect(
-      deriveCopilotApiBaseUrlFromToken("token;proxy-ep=proxy.example.com;"),
-    ).toBe("https://api.example.com");
-    expect(
-      deriveCopilotApiBaseUrlFromToken("token;proxy-ep=https://proxy.foo.bar;"),
-    ).toBe("https://api.foo.bar");
+  it("derives baseUrl from token", async () => {
+    const { deriveCopilotApiBaseUrlFromToken } = await import("./github-copilot-token.js");
+
+    expect(deriveCopilotApiBaseUrlFromToken("token;proxy-ep=proxy.example.com;")).toBe(
+      "https://api.example.com",
+    );
+    expect(deriveCopilotApiBaseUrlFromToken("token;proxy-ep=https://proxy.foo.bar;")).toBe(
+      "https://api.foo.bar",
+    );
   });
 
   it("uses cache when token is still valid", async () => {
@@ -35,9 +41,7 @@ describe("github-copilot token", () => {
       updatedAt: now,
     });
 
-    const { resolveCopilotApiToken } = await import(
-      "./github-copilot-token.js"
-    );
+    const { resolveCopilotApiToken } = await import("./github-copilot-token.js");
 
     const fetchImpl = vi.fn();
     const res = await resolveCopilotApiToken({
@@ -63,9 +67,7 @@ describe("github-copilot token", () => {
       }),
     });
 
-    const { resolveCopilotApiToken } = await import(
-      "./github-copilot-token.js"
-    );
+    const { resolveCopilotApiToken } = await import("./github-copilot-token.js");
 
     const res = await resolveCopilotApiToken({
       githubToken: "gh",

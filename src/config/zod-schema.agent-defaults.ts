@@ -20,38 +20,42 @@ export const AgentDefaultsSchema = z
         primary: z.string().optional(),
         fallbacks: z.array(z.string()).optional(),
       })
+      .strict()
       .optional(),
     imageModel: z
       .object({
         primary: z.string().optional(),
         fallbacks: z.array(z.string()).optional(),
       })
+      .strict()
       .optional(),
     models: z
       .record(
         z.string(),
-        z.object({
-          alias: z.string().optional(),
-          /** Provider-specific API parameters (e.g., GLM-4.7 thinking mode). */
-          params: z.record(z.string(), z.unknown()).optional(),
-        }),
+        z
+          .object({
+            alias: z.string().optional(),
+            /** Provider-specific API parameters (e.g., GLM-4.7 thinking mode). */
+            params: z.record(z.string(), z.unknown()).optional(),
+          })
+          .strict(),
       )
       .optional(),
     workspace: z.string().optional(),
     skipBootstrap: z.boolean().optional(),
     bootstrapMaxChars: z.number().int().positive().optional(),
     userTimezone: z.string().optional(),
+    timeFormat: z.union([z.literal("auto"), z.literal("12"), z.literal("24")]).optional(),
+    envelopeTimezone: z.string().optional(),
+    envelopeTimestamp: z.union([z.literal("on"), z.literal("off")]).optional(),
+    envelopeElapsed: z.union([z.literal("on"), z.literal("off")]).optional(),
     contextTokens: z.number().int().positive().optional(),
     cliBackends: z.record(z.string(), CliBackendSchema).optional(),
     memorySearch: MemorySearchSchema,
     contextPruning: z
       .object({
         mode: z
-          .union([
-            z.literal("off"),
-            z.literal("adaptive"),
-            z.literal("aggressive"),
-          ])
+          .union([z.literal("off"), z.literal("adaptive"), z.literal("aggressive")])
           .optional(),
         keepLastAssistants: z.number().int().nonnegative().optional(),
         softTrimRatio: z.number().min(0).max(1).optional(),
@@ -62,6 +66,7 @@ export const AgentDefaultsSchema = z
             allow: z.array(z.string()).optional(),
             deny: z.array(z.string()).optional(),
           })
+          .strict()
           .optional(),
         softTrim: z
           .object({
@@ -69,20 +74,21 @@ export const AgentDefaultsSchema = z
             headChars: z.number().int().nonnegative().optional(),
             tailChars: z.number().int().nonnegative().optional(),
           })
+          .strict()
           .optional(),
         hardClear: z
           .object({
             enabled: z.boolean().optional(),
             placeholder: z.string().optional(),
           })
+          .strict()
           .optional(),
       })
+      .strict()
       .optional(),
     compaction: z
       .object({
-        mode: z
-          .union([z.literal("default"), z.literal("safeguard")])
-          .optional(),
+        mode: z.union([z.literal("default"), z.literal("safeguard")]).optional(),
         reserveTokensFloor: z.number().int().nonnegative().optional(),
         memoryFlush: z
           .object({
@@ -91,8 +97,10 @@ export const AgentDefaultsSchema = z
             prompt: z.string().optional(),
             systemPrompt: z.string().optional(),
           })
+          .strict()
           .optional(),
       })
+      .strict()
       .optional(),
     thinkingDefault: z
       .union([
@@ -104,14 +112,10 @@ export const AgentDefaultsSchema = z
         z.literal("xhigh"),
       ])
       .optional(),
-    verboseDefault: z.union([z.literal("off"), z.literal("on")]).optional(),
+    verboseDefault: z.union([z.literal("off"), z.literal("on"), z.literal("full")]).optional(),
     elevatedDefault: z.union([z.literal("off"), z.literal("on")]).optional(),
-    blockStreamingDefault: z
-      .union([z.literal("off"), z.literal("on")])
-      .optional(),
-    blockStreamingBreak: z
-      .union([z.literal("text_end"), z.literal("message_end")])
-      .optional(),
+    blockStreamingDefault: z.union([z.literal("off"), z.literal("on")]).optional(),
+    blockStreamingBreak: z.union([z.literal("text_end"), z.literal("message_end")]).optional(),
     blockStreamingChunk: BlockStreamingChunkSchema.optional(),
     blockStreamingCoalesce: BlockStreamingCoalesceSchema.optional(),
     humanDelay: HumanDelaySchema.optional(),
@@ -135,38 +139,31 @@ export const AgentDefaultsSchema = z
         model: z
           .union([
             z.string(),
-            z.object({
-              primary: z.string().optional(),
-              fallbacks: z.array(z.string()).optional(),
-            }),
+            z
+              .object({
+                primary: z.string().optional(),
+                fallbacks: z.array(z.string()).optional(),
+              })
+              .strict(),
           ])
           .optional(),
       })
+      .strict()
       .optional(),
     sandbox: z
       .object({
-        mode: z
-          .union([z.literal("off"), z.literal("non-main"), z.literal("all")])
-          .optional(),
-        workspaceAccess: z
-          .union([z.literal("none"), z.literal("ro"), z.literal("rw")])
-          .optional(),
-        sessionToolsVisibility: z
-          .union([z.literal("spawned"), z.literal("all")])
-          .optional(),
-        scope: z
-          .union([
-            z.literal("session"),
-            z.literal("agent"),
-            z.literal("shared"),
-          ])
-          .optional(),
+        mode: z.union([z.literal("off"), z.literal("non-main"), z.literal("all")]).optional(),
+        workspaceAccess: z.union([z.literal("none"), z.literal("ro"), z.literal("rw")]).optional(),
+        sessionToolsVisibility: z.union([z.literal("spawned"), z.literal("all")]).optional(),
+        scope: z.union([z.literal("session"), z.literal("agent"), z.literal("shared")]).optional(),
         perSession: z.boolean().optional(),
         workspaceRoot: z.string().optional(),
         docker: SandboxDockerSchema,
         browser: SandboxBrowserSchema,
         prune: SandboxPruneSchema,
       })
+      .strict()
       .optional(),
   })
+  .strict()
   .optional();

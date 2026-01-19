@@ -27,32 +27,8 @@ import {
   readStringArrayParam,
   readStringParam,
 } from "./common.js";
-
-function formatDiscordTimestamp(ts?: string | null): string | undefined {
-  if (!ts) return undefined;
-  const date = new Date(ts);
-  if (Number.isNaN(date.getTime())) return undefined;
-
-  const yyyy = String(date.getFullYear()).padStart(4, "0");
-  const mm = String(date.getMonth() + 1).padStart(2, "0");
-  const dd = String(date.getDate()).padStart(2, "0");
-  const hh = String(date.getHours()).padStart(2, "0");
-  const min = String(date.getMinutes()).padStart(2, "0");
-
-  // getTimezoneOffset() is minutes *behind* UTC. Flip sign to get ISO offset.
-  const offsetMinutes = -date.getTimezoneOffset();
-  const sign = offsetMinutes >= 0 ? "+" : "-";
-  const absOffsetMinutes = Math.abs(offsetMinutes);
-  const offsetH = String(Math.floor(absOffsetMinutes / 60)).padStart(2, "0");
-  const offsetM = String(absOffsetMinutes % 60).padStart(2, "0");
-
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const tzSuffix = tz ? `{${tz}}` : "";
-
-  // Compact ISO-like *local* timestamp with minutes precision.
-  // Example: 2025-01-02T03:04-08:00{America/Los_Angeles}
-  return `${yyyy}-${mm}-${dd}T${hh}:${min}${sign}${offsetH}:${offsetM}${tzSuffix}`;
-}
+import { withNormalizedTimestamp } from "../date-time.js";
+import { resolveDiscordChannelId } from "../../discord/targets.js";
 
 function parseDiscordMessageLink(link: string) {
   const normalized = link.trim();
@@ -76,14 +52,25 @@ export async function handleDiscordMessagingAction(
   params: Record<string, unknown>,
   isActionEnabled: ActionGate<DiscordActionConfig>,
 ): Promise<AgentToolResult<unknown>> {
+  const resolveChannelId = () =>
+    resolveDiscordChannelId(
+      readStringParam(params, "channelId", {
+        required: true,
+      }),
+    );
+  const normalizeMessage = (message: unknown) => {
+    if (!message || typeof message !== "object") return message;
+    return withNormalizedTimestamp(
+      message as Record<string, unknown>,
+      (message as { timestamp?: unknown }).timestamp,
+    );
+  };
   switch (action) {
     case "react": {
       if (!isActionEnabled("reactions")) {
         throw new Error("Discord reactions are disabled.");
       }
-      const channelId = readStringParam(params, "channelId", {
-        required: true,
-      });
+      const channelId = resolveChannelId();
       const messageId = readStringParam(params, "messageId", {
         required: true,
       });
@@ -105,17 +92,13 @@ export async function handleDiscordMessagingAction(
       if (!isActionEnabled("reactions")) {
         throw new Error("Discord reactions are disabled.");
       }
-      const channelId = readStringParam(params, "channelId", {
-        required: true,
-      });
+      const channelId = resolveChannelId();
       const messageId = readStringParam(params, "messageId", {
         required: true,
       });
       const limitRaw = params.limit;
       const limit =
-        typeof limitRaw === "number" && Number.isFinite(limitRaw)
-          ? limitRaw
-          : undefined;
+        typeof limitRaw === "number" && Number.isFinite(limitRaw) ? limitRaw : undefined;
       const reactions = await fetchReactionsDiscord(channelId, messageId, {
         limit,
       });
@@ -149,14 +132,10 @@ export async function handleDiscordMessagingAction(
       });
       const allowMultiselectRaw = params.allowMultiselect;
       const allowMultiselect =
-        typeof allowMultiselectRaw === "boolean"
-          ? allowMultiselectRaw
-          : undefined;
+        typeof allowMultiselectRaw === "boolean" ? allowMultiselectRaw : undefined;
       const durationRaw = params.durationHours;
       const durationHours =
-        typeof durationRaw === "number" && Number.isFinite(durationRaw)
-          ? durationRaw
-          : undefined;
+        typeof durationRaw === "number" && Number.isFinite(durationRaw) ? durationRaw : undefined;
       const maxSelections = allowMultiselect ? Math.max(2, answers.length) : 1;
       await sendPollDiscord(
         to,
@@ -169,9 +148,7 @@ export async function handleDiscordMessagingAction(
       if (!isActionEnabled("permissions")) {
         throw new Error("Discord permissions are disabled.");
       }
-      const channelId = readStringParam(params, "channelId", {
-        required: true,
-      });
+      const channelId = resolveChannelId();
       const permissions = await fetchChannelPermissionsDiscord(channelId);
       return jsonResult({ ok: true, permissions });
     }
@@ -195,15 +172,19 @@ export async function handleDiscordMessagingAction(
         );
       }
       const message = await fetchMessageDiscord(channelId, messageId);
-      return jsonResult({ ok: true, message, guildId, channelId, messageId });
+      return jsonResult({
+        ok: true,
+        message: normalizeMessage(message),
+        guildId,
+        channelId,
+        messageId,
+      });
     }
     case "readMessages": {
       if (!isActionEnabled("messages")) {
         throw new Error("Discord message reads are disabled.");
       }
-      const channelId = readStringParam(params, "channelId", {
-        required: true,
-      });
+      const channelId = resolveChannelId();
       const messages = await readMessagesDiscord(channelId, {
         limit:
           typeof params.limit === "number" && Number.isFinite(params.limit)
@@ -213,12 +194,10 @@ export async function handleDiscordMessagingAction(
         after: readStringParam(params, "after"),
         around: readStringParam(params, "around"),
       });
-      const formattedMessages = messages.map((message) => ({
-        ...message,
-        timestamp:
-          formatDiscordTimestamp(message.timestamp) ?? message.timestamp,
-      }));
-      return jsonResult({ ok: true, messages: formattedMessages });
+      return jsonResult({
+        ok: true,
+        messages: messages.map((message) => normalizeMessage(message)),
+      });
     }
     case "sendMessage": {
       if (!isActionEnabled("messages")) {
@@ -230,9 +209,12 @@ export async function handleDiscordMessagingAction(
       });
       const mediaUrl = readStringParam(params, "mediaUrl");
       const replyTo = readStringParam(params, "replyTo");
+      const embeds =
+        Array.isArray(params.embeds) && params.embeds.length > 0 ? params.embeds : undefined;
       const result = await sendMessageDiscord(to, content, {
         mediaUrl,
         replyTo,
+        embeds,
       });
       return jsonResult({ ok: true, result });
     }
@@ -240,9 +222,7 @@ export async function handleDiscordMessagingAction(
       if (!isActionEnabled("messages")) {
         throw new Error("Discord message edits are disabled.");
       }
-      const channelId = readStringParam(params, "channelId", {
-        required: true,
-      });
+      const channelId = resolveChannelId();
       const messageId = readStringParam(params, "messageId", {
         required: true,
       });
@@ -258,9 +238,7 @@ export async function handleDiscordMessagingAction(
       if (!isActionEnabled("messages")) {
         throw new Error("Discord message deletes are disabled.");
       }
-      const channelId = readStringParam(params, "channelId", {
-        required: true,
-      });
+      const channelId = resolveChannelId();
       const messageId = readStringParam(params, "messageId", {
         required: true,
       });
@@ -271,15 +249,12 @@ export async function handleDiscordMessagingAction(
       if (!isActionEnabled("threads")) {
         throw new Error("Discord threads are disabled.");
       }
-      const channelId = readStringParam(params, "channelId", {
-        required: true,
-      });
+      const channelId = resolveChannelId();
       const name = readStringParam(params, "name", { required: true });
       const messageId = readStringParam(params, "messageId");
       const autoArchiveMinutesRaw = params.autoArchiveMinutes;
       const autoArchiveMinutes =
-        typeof autoArchiveMinutesRaw === "number" &&
-        Number.isFinite(autoArchiveMinutesRaw)
+        typeof autoArchiveMinutesRaw === "number" && Number.isFinite(autoArchiveMinutesRaw)
           ? autoArchiveMinutesRaw
           : undefined;
       const thread = await createThreadDiscord(channelId, {
@@ -298,9 +273,7 @@ export async function handleDiscordMessagingAction(
       });
       const channelId = readStringParam(params, "channelId");
       const includeArchived =
-        typeof params.includeArchived === "boolean"
-          ? params.includeArchived
-          : undefined;
+        typeof params.includeArchived === "boolean" ? params.includeArchived : undefined;
       const before = readStringParam(params, "before");
       const limit =
         typeof params.limit === "number" && Number.isFinite(params.limit)
@@ -319,9 +292,7 @@ export async function handleDiscordMessagingAction(
       if (!isActionEnabled("threads")) {
         throw new Error("Discord threads are disabled.");
       }
-      const channelId = readStringParam(params, "channelId", {
-        required: true,
-      });
+      const channelId = resolveChannelId();
       const content = readStringParam(params, "content", {
         required: true,
       });
@@ -337,9 +308,7 @@ export async function handleDiscordMessagingAction(
       if (!isActionEnabled("pins")) {
         throw new Error("Discord pins are disabled.");
       }
-      const channelId = readStringParam(params, "channelId", {
-        required: true,
-      });
+      const channelId = resolveChannelId();
       const messageId = readStringParam(params, "messageId", {
         required: true,
       });
@@ -350,9 +319,7 @@ export async function handleDiscordMessagingAction(
       if (!isActionEnabled("pins")) {
         throw new Error("Discord pins are disabled.");
       }
-      const channelId = readStringParam(params, "channelId", {
-        required: true,
-      });
+      const channelId = resolveChannelId();
       const messageId = readStringParam(params, "messageId", {
         required: true,
       });
@@ -363,11 +330,9 @@ export async function handleDiscordMessagingAction(
       if (!isActionEnabled("pins")) {
         throw new Error("Discord pins are disabled.");
       }
-      const channelId = readStringParam(params, "channelId", {
-        required: true,
-      });
+      const channelId = resolveChannelId();
       const pins = await listPinsDiscord(channelId);
-      return jsonResult({ ok: true, pins });
+      return jsonResult({ ok: true, pins: pins.map((pin) => normalizeMessage(pin)) });
     }
     case "searchMessages": {
       if (!isActionEnabled("search")) {
@@ -387,14 +352,8 @@ export async function handleDiscordMessagingAction(
         typeof params.limit === "number" && Number.isFinite(params.limit)
           ? params.limit
           : undefined;
-      const channelIdList = [
-        ...(channelIds ?? []),
-        ...(channelId ? [channelId] : []),
-      ];
-      const authorIdList = [
-        ...(authorIds ?? []),
-        ...(authorId ? [authorId] : []),
-      ];
+      const channelIdList = [...(channelIds ?? []), ...(channelId ? [channelId] : [])];
+      const authorIdList = [...(authorIds ?? []), ...(authorId ? [authorId] : [])];
       const results = await searchMessagesDiscord({
         guildId,
         content,
@@ -402,7 +361,23 @@ export async function handleDiscordMessagingAction(
         authorIds: authorIdList.length ? authorIdList : undefined,
         limit,
       });
-      return jsonResult({ ok: true, results });
+      if (!results || typeof results !== "object") {
+        return jsonResult({ ok: true, results });
+      }
+      const resultsRecord = results as Record<string, unknown>;
+      const messages = resultsRecord.messages;
+      const normalizedMessages = Array.isArray(messages)
+        ? messages.map((group) =>
+            Array.isArray(group) ? group.map((msg) => normalizeMessage(msg)) : group,
+          )
+        : messages;
+      return jsonResult({
+        ok: true,
+        results: {
+          ...resultsRecord,
+          messages: normalizedMessages,
+        },
+      });
     }
     default:
       throw new Error(`Unknown action: ${action}`);

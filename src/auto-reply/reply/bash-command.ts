@@ -1,14 +1,11 @@
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
-import {
-  getFinishedSession,
-  getSession,
-  markExited,
-} from "../../agents/bash-process-registry.js";
+import { getFinishedSession, getSession, markExited } from "../../agents/bash-process-registry.js";
 import { createExecTool } from "../../agents/bash-tools.js";
 import { resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
 import { killProcessTree } from "../../agents/shell-utils.js";
 import type { ClawdbotConfig } from "../../config/config.js";
 import { logVerbose } from "../../globals.js";
+import { clampInt } from "../../utils.js";
 import type { MsgContext } from "../templating.js";
 import type { ReplyPayload } from "../types.js";
 import { stripMentions, stripStructuralPrefixes } from "./mentions.js";
@@ -35,15 +32,10 @@ type ActiveBashJob =
 
 let activeJob: ActiveBashJob | null = null;
 
-function clampNumber(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
-
 function resolveForegroundMs(cfg: ClawdbotConfig): number {
   const raw = cfg.commands?.bashForegroundMs;
-  if (typeof raw !== "number" || Number.isNaN(raw))
-    return DEFAULT_FOREGROUND_MS;
-  return clampNumber(Math.floor(raw), 0, MAX_FOREGROUND_MS);
+  if (typeof raw !== "number" || Number.isNaN(raw)) return DEFAULT_FOREGROUND_MS;
+  return clampInt(raw, 0, MAX_FOREGROUND_MS);
 }
 
 function formatSessionSnippet(sessionId: string) {
@@ -98,8 +90,7 @@ function resolveRawCommandBody(params: {
   agentId?: string;
   isGroup: boolean;
 }) {
-  const source =
-    params.ctx.CommandBody ?? params.ctx.RawBody ?? params.ctx.Body ?? "";
+  const source = params.ctx.CommandBody ?? params.ctx.RawBody ?? params.ctx.Body ?? "";
   const stripped = stripStructuralPrefixes(source);
   return params.isGroup
     ? stripMentions(stripped, params.ctx, params.cfg, params.agentId)
@@ -110,8 +101,7 @@ function getScopedSession(sessionId: string) {
   const running = getSession(sessionId);
   if (running && running.scopeKey === CHAT_BASH_SCOPE_KEY) return { running };
   const finished = getFinishedSession(sessionId);
-  if (finished && finished.scopeKey === CHAT_BASH_SCOPE_KEY)
-    return { finished };
+  if (finished && finished.scopeKey === CHAT_BASH_SCOPE_KEY) return { finished };
   return {};
 }
 
@@ -165,11 +155,7 @@ function formatElevatedUnavailableMessage(params: {
     `elevated is not available right now (runtime=${params.runtimeSandboxed ? "sandboxed" : "direct"}).`,
   );
   if (params.failures.length > 0) {
-    lines.push(
-      `Failing gates: ${params.failures
-        .map((f) => `${f.gate} (${f.key})`)
-        .join(", ")}`,
-    );
+    lines.push(`Failing gates: ${params.failures.map((f) => `${f.gate} (${f.key})`).join(", ")}`);
   } else {
     lines.push(
       "Failing gates: enabled (tools.elevated.enabled / agents.list[].tools.elevated.enabled), allowFrom (tools.elevated.allowFrom.<provider>).",
@@ -200,7 +186,7 @@ export async function handleBashChatCommand(params: {
 }): Promise<ReplyPayload> {
   if (params.cfg.commands?.bash !== true) {
     return {
-      text: "⚠️ bash is disabled. Set commands.bash=true to enable.",
+      text: "⚠️ bash is disabled. Set commands.bash=true to enable. Docs: https://docs.clawd.bot/tools/slash-commands#config",
     };
   }
 
@@ -244,18 +230,14 @@ export async function handleBashChatCommand(params: {
 
   if (request.action === "poll") {
     const sessionId =
-      request.sessionId?.trim() ||
-      (liveJob?.state === "running" ? liveJob.sessionId : "");
+      request.sessionId?.trim() || (liveJob?.state === "running" ? liveJob.sessionId : "");
     if (!sessionId) {
       return { text: "⚙️ No active bash job." };
     }
     const { running, finished } = getScopedSession(sessionId);
     if (running) {
       attachActiveWatcher(sessionId);
-      const runtimeSec = Math.max(
-        0,
-        Math.floor((Date.now() - running.startedAt) / 1000),
-      );
+      const runtimeSec = Math.max(0, Math.floor((Date.now() - running.startedAt) / 1000));
       const tail = running.tail || "(no output yet)";
       return {
         text: [
@@ -291,8 +273,7 @@ export async function handleBashChatCommand(params: {
 
   if (request.action === "stop") {
     const sessionId =
-      request.sessionId?.trim() ||
-      (liveJob?.state === "running" ? liveJob.sessionId : "");
+      request.sessionId?.trim() || (liveJob?.state === "running" ? liveJob.sessionId : "");
     if (!sessionId) {
       return { text: "⚙️ No active bash job." };
     }
@@ -326,9 +307,7 @@ export async function handleBashChatCommand(params: {
   // request.action === "run"
   if (liveJob) {
     const label =
-      liveJob.state === "running"
-        ? formatSessionSnippet(liveJob.sessionId)
-        : "starting";
+      liveJob.state === "running" ? formatSessionSnippet(liveJob.sessionId) : "starting";
     return {
       text: `⚠️ A bash job is already running (${label}). Use !poll / !stop (or /bash poll / /bash stop).`,
     };
@@ -346,12 +325,14 @@ export async function handleBashChatCommand(params: {
   try {
     const foregroundMs = resolveForegroundMs(params.cfg);
     const shouldBackgroundImmediately = foregroundMs <= 0;
-    const timeoutSec =
-      params.cfg.tools?.exec?.timeoutSec ?? params.cfg.tools?.bash?.timeoutSec;
+    const timeoutSec = params.cfg.tools?.exec?.timeoutSec;
+    const notifyOnExit = params.cfg.tools?.exec?.notifyOnExit;
     const execTool = createExecTool({
       scopeKey: CHAT_BASH_SCOPE_KEY,
       allowBackground: true,
       timeoutSec,
+      sessionKey: params.sessionKey,
+      notifyOnExit,
       elevated: {
         enabled: params.elevated.enabled,
         allowed: params.elevated.allowed,
@@ -385,14 +366,11 @@ export async function handleBashChatCommand(params: {
 
     // Completed in foreground.
     activeJob = null;
-    const exitCode =
-      result.details?.status === "completed" ? result.details.exitCode : 0;
+    const exitCode = result.details?.status === "completed" ? result.details.exitCode : 0;
     const output =
       result.details?.status === "completed"
         ? result.details.aggregated
-        : result.content
-            .map((chunk) => (chunk.type === "text" ? chunk.text : ""))
-            .join("\n");
+        : result.content.map((chunk) => (chunk.type === "text" ? chunk.text : "")).join("\n");
     return {
       text: [
         `⚙️ bash: ${commandText}`,
@@ -404,9 +382,7 @@ export async function handleBashChatCommand(params: {
     activeJob = null;
     const message = err instanceof Error ? err.message : String(err);
     return {
-      text: [`⚠️ bash failed: ${commandText}`, formatOutputBlock(message)].join(
-        "\n",
-      ),
+      text: [`⚠️ bash failed: ${commandText}`, formatOutputBlock(message)].join("\n"),
     };
   }
 }

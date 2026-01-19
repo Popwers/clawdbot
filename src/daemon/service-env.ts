@@ -6,6 +6,12 @@ import {
   GATEWAY_SERVICE_MARKER,
   resolveGatewayLaunchAgentLabel,
   resolveGatewaySystemdServiceName,
+  NODE_SERVICE_KIND,
+  NODE_SERVICE_MARKER,
+  NODE_WINDOWS_TASK_SCRIPT_NAME,
+  resolveNodeLaunchAgentLabel,
+  resolveNodeSystemdServiceName,
+  resolveNodeWindowsTaskName,
 } from "./constants.js";
 
 export type MinimalServicePathOptions = {
@@ -27,9 +33,7 @@ function resolveSystemPathDirs(platform: NodeJS.Platform): string[] {
   return [];
 }
 
-export function getMinimalServicePathParts(
-  options: MinimalServicePathOptions = {},
-): string[] {
+export function getMinimalServicePathParts(options: MinimalServicePathOptions = {}): string[] {
   const platform = options.platform ?? process.platform;
   if (platform === "win32") return [];
 
@@ -48,9 +52,7 @@ export function getMinimalServicePathParts(
   return parts;
 }
 
-export function buildMinimalServicePath(
-  options: BuildServicePathOptions = {},
-): string {
+export function buildMinimalServicePath(options: BuildServicePathOptions = {}): string {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
   if (platform === "win32") {
@@ -70,11 +72,10 @@ export function buildServiceEnvironment(params: {
   const profile = env.CLAWDBOT_PROFILE;
   const resolvedLaunchdLabel =
     launchdLabel ||
-    (process.platform === "darwin"
-      ? resolveGatewayLaunchAgentLabel(profile)
-      : undefined);
+    (process.platform === "darwin" ? resolveGatewayLaunchAgentLabel(profile) : undefined);
   const systemdUnit = `${resolveGatewaySystemdServiceName(profile)}.service`;
   return {
+    HOME: env.HOME,
     PATH: buildMinimalServicePath({ env }),
     CLAWDBOT_PROFILE: profile,
     CLAWDBOT_STATE_DIR: env.CLAWDBOT_STATE_DIR,
@@ -85,6 +86,26 @@ export function buildServiceEnvironment(params: {
     CLAWDBOT_SYSTEMD_UNIT: systemdUnit,
     CLAWDBOT_SERVICE_MARKER: GATEWAY_SERVICE_MARKER,
     CLAWDBOT_SERVICE_KIND: GATEWAY_SERVICE_KIND,
+    CLAWDBOT_SERVICE_VERSION: VERSION,
+  };
+}
+
+export function buildNodeServiceEnvironment(params: {
+  env: Record<string, string | undefined>;
+}): Record<string, string | undefined> {
+  const { env } = params;
+  return {
+    HOME: env.HOME,
+    PATH: buildMinimalServicePath({ env }),
+    CLAWDBOT_STATE_DIR: env.CLAWDBOT_STATE_DIR,
+    CLAWDBOT_CONFIG_PATH: env.CLAWDBOT_CONFIG_PATH,
+    CLAWDBOT_LAUNCHD_LABEL: resolveNodeLaunchAgentLabel(),
+    CLAWDBOT_SYSTEMD_UNIT: resolveNodeSystemdServiceName(),
+    CLAWDBOT_WINDOWS_TASK_NAME: resolveNodeWindowsTaskName(),
+    CLAWDBOT_TASK_SCRIPT_NAME: NODE_WINDOWS_TASK_SCRIPT_NAME,
+    CLAWDBOT_LOG_PREFIX: "node",
+    CLAWDBOT_SERVICE_MARKER: NODE_SERVICE_MARKER,
+    CLAWDBOT_SERVICE_KIND: NODE_SERVICE_KIND,
     CLAWDBOT_SERVICE_VERSION: VERSION,
   };
 }

@@ -3,6 +3,8 @@ import { ChannelType, MessageType } from "@buape/carbon";
 import { Routes } from "discord-api-types/v10";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { __resetDiscordChannelInfoCacheForTest } from "./monitor/message-utils.js";
+
 const sendMock = vi.fn();
 const reactMock = vi.fn();
 const updateLastRouteMock = vi.fn();
@@ -20,10 +22,8 @@ vi.mock("../auto-reply/reply/dispatch-from-config.js", () => ({
   dispatchReplyFromConfig: (...args: unknown[]) => dispatchMock(...args),
 }));
 vi.mock("../pairing/pairing-store.js", () => ({
-  readChannelAllowFromStore: (...args: unknown[]) =>
-    readAllowFromStoreMock(...args),
-  upsertChannelPairingRequest: (...args: unknown[]) =>
-    upsertPairingRequestMock(...args),
+  readChannelAllowFromStore: (...args: unknown[]) => readAllowFromStoreMock(...args),
+  upsertChannelPairingRequest: (...args: unknown[]) => upsertPairingRequestMock(...args),
 }));
 vi.mock("../config/sessions.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/sessions.js")>();
@@ -43,10 +43,8 @@ beforeEach(() => {
     return { queuedFinal: true, counts: { final: 1 } };
   });
   readAllowFromStoreMock.mockReset().mockResolvedValue([]);
-  upsertPairingRequestMock
-    .mockReset()
-    .mockResolvedValue({ code: "PAIRCODE", created: true });
-  vi.resetModules();
+  upsertPairingRequestMock.mockReset().mockResolvedValue({ code: "PAIRCODE", created: true });
+  __resetDiscordChannelInfoCacheForTest();
 });
 
 describe("discord tool result dispatch", () => {
@@ -128,7 +126,107 @@ describe("discord tool result dispatch", () => {
 
     expect(dispatchMock).toHaveBeenCalledTimes(1);
     expect(sendMock).toHaveBeenCalledTimes(1);
-  }, 10000);
+  }, 20_000);
+
+  it("accepts guild reply-to-bot messages as implicit mentions", async () => {
+    const { createDiscordMessageHandler } = await import("./monitor.js");
+    const cfg = {
+      agents: {
+        defaults: {
+          model: "anthropic/claude-opus-4-5",
+          workspace: "/tmp/clawd",
+        },
+      },
+      session: { store: "/tmp/clawdbot-sessions.json" },
+      channels: {
+        discord: {
+          dm: { enabled: true, policy: "open" },
+          groupPolicy: "open",
+          guilds: { "*": { requireMention: true } },
+        },
+      },
+    } as ReturnType<typeof import("../config/config.js").loadConfig>;
+
+    const handler = createDiscordMessageHandler({
+      cfg,
+      discordConfig: cfg.channels.discord,
+      accountId: "default",
+      token: "token",
+      runtime: {
+        log: vi.fn(),
+        error: vi.fn(),
+        exit: (code: number): never => {
+          throw new Error(`exit ${code}`);
+        },
+      },
+      botUserId: "bot-id",
+      guildHistories: new Map(),
+      historyLimit: 0,
+      mediaMaxBytes: 10_000,
+      textLimit: 2000,
+      replyToMode: "off",
+      dmEnabled: true,
+      groupDmEnabled: false,
+      guildEntries: { "*": { requireMention: true } },
+    });
+
+    const client = {
+      fetchChannel: vi.fn().mockResolvedValue({
+        type: ChannelType.GuildText,
+        name: "general",
+      }),
+    } as unknown as Client;
+
+    await handler(
+      {
+        message: {
+          id: "m3",
+          content: "following up",
+          channelId: "c1",
+          timestamp: new Date().toISOString(),
+          type: MessageType.Default,
+          attachments: [],
+          embeds: [],
+          mentionedEveryone: false,
+          mentionedUsers: [],
+          mentionedRoles: [],
+          author: { id: "u1", bot: false, username: "Ada" },
+          referencedMessage: {
+            id: "m2",
+            channelId: "c1",
+            content: "bot reply",
+            timestamp: new Date().toISOString(),
+            type: MessageType.Default,
+            attachments: [],
+            embeds: [],
+            mentionedEveryone: false,
+            mentionedUsers: [],
+            mentionedRoles: [],
+            author: { id: "bot-id", bot: true, username: "Clawdbot" },
+          },
+        },
+        author: { id: "u1", bot: false, username: "Ada" },
+        member: { nickname: "Ada" },
+        guild: { id: "g1", name: "Guild" },
+        guild_id: "g1",
+        channel: { id: "c1", type: ChannelType.GuildText },
+        client,
+        data: {
+          id: "m3",
+          content: "following up",
+          channel_id: "c1",
+          guild_id: "g1",
+          type: MessageType.Default,
+          mentions: [],
+        },
+      },
+      client,
+    );
+
+    expect(dispatchMock).toHaveBeenCalledTimes(1);
+    const payload = dispatchMock.mock.calls[0]?.[0]?.ctx as Record<string, unknown>;
+    expect(payload.WasMentioned).toBe(true);
+  });
 
   it("forks thread sessions and injects starter context", async () => {
     const { createDiscordMessageHandler } = await import("./monitor.js");
@@ -343,9 +441,7 @@ describe("discord tool result dispatch", () => {
     );
 
     expect(capturedCtx?.SessionKey).toBe("agent:main:discord:channel:t1");
-    expect(capturedCtx?.ParentSessionKey).toBe(
-      "agent:main:discord:channel:forum-1",
-    );
+    expect(capturedCtx?.ParentSessionKey).toBe("agent:main:discord:channel:forum-1");
     expect(capturedCtx?.ThreadStarterBody).toContain("starter message");
     expect(capturedCtx?.ThreadLabel).toContain("Discord thread #support");
     expect(restGet).toHaveBeenCalledWith(Routes.channelMessage("t1", "t1"));
@@ -382,9 +478,7 @@ describe("discord tool result dispatch", () => {
           guilds: { "*": { requireMention: false } },
         },
       },
-      bindings: [
-        { agentId: "support", match: { channel: "discord", guildId: "g1" } },
-      ],
+      bindings: [{ agentId: "support", match: { channel: "discord", guildId: "g1" } }],
     } as ReturnType<typeof import("../config/config.js").loadConfig>;
 
     const handler = createDiscordMessageHandler({
@@ -457,8 +551,6 @@ describe("discord tool result dispatch", () => {
     );
 
     expect(capturedCtx?.SessionKey).toBe("agent:support:discord:channel:t1");
-    expect(capturedCtx?.ParentSessionKey).toBe(
-      "agent:support:discord:channel:p1",
-    );
+    expect(capturedCtx?.ParentSessionKey).toBe("agent:support:discord:channel:p1");
   });
 });

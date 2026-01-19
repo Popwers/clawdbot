@@ -7,10 +7,15 @@ import {
 import type { ClawdbotConfig } from "../config/config.js";
 import {
   OPENROUTER_DEFAULT_MODEL_REF,
+  VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF,
   ZAI_DEFAULT_MODEL_REF,
 } from "./onboard-auth.credentials.js";
 import {
+  buildKimiCodeModelDefinition,
   buildMoonshotModelDefinition,
+  KIMI_CODE_BASE_URL,
+  KIMI_CODE_MODEL_ID,
+  KIMI_CODE_MODEL_REF,
   MOONSHOT_BASE_URL,
   MOONSHOT_DEFAULT_MODEL_ID,
   MOONSHOT_DEFAULT_MODEL_REF,
@@ -32,11 +37,9 @@ export function applyZaiConfig(cfg: ClawdbotConfig): ClawdbotConfig {
         ...cfg.agents?.defaults,
         models,
         model: {
-          ...(existingModel &&
-          "fallbacks" in (existingModel as Record<string, unknown>)
+          ...(existingModel && "fallbacks" in (existingModel as Record<string, unknown>)
             ? {
-                fallbacks: (existingModel as { fallbacks?: string[] })
-                  .fallbacks,
+                fallbacks: (existingModel as { fallbacks?: string[] }).fallbacks,
               }
             : undefined),
           primary: ZAI_DEFAULT_MODEL_REF,
@@ -46,9 +49,7 @@ export function applyZaiConfig(cfg: ClawdbotConfig): ClawdbotConfig {
   };
 }
 
-export function applyOpenrouterProviderConfig(
-  cfg: ClawdbotConfig,
-): ClawdbotConfig {
+export function applyOpenrouterProviderConfig(cfg: ClawdbotConfig): ClawdbotConfig {
   const models = { ...cfg.agents?.defaults?.models };
   models[OPENROUTER_DEFAULT_MODEL_REF] = {
     ...models[OPENROUTER_DEFAULT_MODEL_REF],
@@ -67,6 +68,47 @@ export function applyOpenrouterProviderConfig(
   };
 }
 
+export function applyVercelAiGatewayProviderConfig(cfg: ClawdbotConfig): ClawdbotConfig {
+  const models = { ...cfg.agents?.defaults?.models };
+  models[VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF] = {
+    ...models[VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF],
+    alias: models[VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF]?.alias ?? "Vercel AI Gateway",
+  };
+
+  return {
+    ...cfg,
+    agents: {
+      ...cfg.agents,
+      defaults: {
+        ...cfg.agents?.defaults,
+        models,
+      },
+    },
+  };
+}
+
+export function applyVercelAiGatewayConfig(cfg: ClawdbotConfig): ClawdbotConfig {
+  const next = applyVercelAiGatewayProviderConfig(cfg);
+  const existingModel = next.agents?.defaults?.model;
+  return {
+    ...next,
+    agents: {
+      ...next.agents,
+      defaults: {
+        ...next.agents?.defaults,
+        model: {
+          ...(existingModel && "fallbacks" in (existingModel as Record<string, unknown>)
+            ? {
+                fallbacks: (existingModel as { fallbacks?: string[] }).fallbacks,
+              }
+            : undefined),
+          primary: VERCEL_AI_GATEWAY_DEFAULT_MODEL_REF,
+        },
+      },
+    },
+  };
+}
+
 export function applyOpenrouterConfig(cfg: ClawdbotConfig): ClawdbotConfig {
   const next = applyOpenrouterProviderConfig(cfg);
   const existingModel = next.agents?.defaults?.model;
@@ -77,11 +119,9 @@ export function applyOpenrouterConfig(cfg: ClawdbotConfig): ClawdbotConfig {
       defaults: {
         ...next.agents?.defaults,
         model: {
-          ...(existingModel &&
-          "fallbacks" in (existingModel as Record<string, unknown>)
+          ...(existingModel && "fallbacks" in (existingModel as Record<string, unknown>)
             ? {
-                fallbacks: (existingModel as { fallbacks?: string[] })
-                  .fallbacks,
+                fallbacks: (existingModel as { fallbacks?: string[] }).fallbacks,
               }
             : undefined),
           primary: OPENROUTER_DEFAULT_MODEL_REF,
@@ -91,9 +131,7 @@ export function applyOpenrouterConfig(cfg: ClawdbotConfig): ClawdbotConfig {
   };
 }
 
-export function applyMoonshotProviderConfig(
-  cfg: ClawdbotConfig,
-): ClawdbotConfig {
+export function applyMoonshotProviderConfig(cfg: ClawdbotConfig): ClawdbotConfig {
   const models = { ...cfg.agents?.defaults?.models };
   models[MOONSHOT_DEFAULT_MODEL_REF] = {
     ...models[MOONSHOT_DEFAULT_MODEL_REF],
@@ -102,20 +140,15 @@ export function applyMoonshotProviderConfig(
 
   const providers = { ...cfg.models?.providers };
   const existingProvider = providers.moonshot;
-  const existingModels = Array.isArray(existingProvider?.models)
-    ? existingProvider.models
-    : [];
+  const existingModels = Array.isArray(existingProvider?.models) ? existingProvider.models : [];
   const defaultModel = buildMoonshotModelDefinition();
-  const hasDefaultModel = existingModels.some(
-    (model) => model.id === MOONSHOT_DEFAULT_MODEL_ID,
-  );
-  const mergedModels = hasDefaultModel
-    ? existingModels
-    : [...existingModels, defaultModel];
-  const { apiKey: existingApiKey, ...existingProviderRest } =
-    (existingProvider ?? {}) as Record<string, unknown> as { apiKey?: string };
-  const resolvedApiKey =
-    typeof existingApiKey === "string" ? existingApiKey : undefined;
+  const hasDefaultModel = existingModels.some((model) => model.id === MOONSHOT_DEFAULT_MODEL_ID);
+  const mergedModels = hasDefaultModel ? existingModels : [...existingModels, defaultModel];
+  const { apiKey: existingApiKey, ...existingProviderRest } = (existingProvider ?? {}) as Record<
+    string,
+    unknown
+  > as { apiKey?: string };
+  const resolvedApiKey = typeof existingApiKey === "string" ? existingApiKey : undefined;
   const normalizedApiKey = resolvedApiKey?.trim();
   providers.moonshot = {
     ...existingProviderRest,
@@ -151,11 +184,9 @@ export function applyMoonshotConfig(cfg: ClawdbotConfig): ClawdbotConfig {
       defaults: {
         ...next.agents?.defaults,
         model: {
-          ...(existingModel &&
-          "fallbacks" in (existingModel as Record<string, unknown>)
+          ...(existingModel && "fallbacks" in (existingModel as Record<string, unknown>)
             ? {
-                fallbacks: (existingModel as { fallbacks?: string[] })
-                  .fallbacks,
+                fallbacks: (existingModel as { fallbacks?: string[] }).fallbacks,
               }
             : undefined),
           primary: MOONSHOT_DEFAULT_MODEL_REF,
@@ -165,9 +196,72 @@ export function applyMoonshotConfig(cfg: ClawdbotConfig): ClawdbotConfig {
   };
 }
 
-export function applySyntheticProviderConfig(
-  cfg: ClawdbotConfig,
-): ClawdbotConfig {
+export function applyKimiCodeProviderConfig(cfg: ClawdbotConfig): ClawdbotConfig {
+  const models = { ...cfg.agents?.defaults?.models };
+  models[KIMI_CODE_MODEL_REF] = {
+    ...models[KIMI_CODE_MODEL_REF],
+    alias: models[KIMI_CODE_MODEL_REF]?.alias ?? "Kimi Code",
+  };
+
+  const providers = { ...cfg.models?.providers };
+  const existingProvider = providers["kimi-code"];
+  const existingModels = Array.isArray(existingProvider?.models) ? existingProvider.models : [];
+  const defaultModel = buildKimiCodeModelDefinition();
+  const hasDefaultModel = existingModels.some((model) => model.id === KIMI_CODE_MODEL_ID);
+  const mergedModels = hasDefaultModel ? existingModels : [...existingModels, defaultModel];
+  const { apiKey: existingApiKey, ...existingProviderRest } = (existingProvider ?? {}) as Record<
+    string,
+    unknown
+  > as { apiKey?: string };
+  const resolvedApiKey = typeof existingApiKey === "string" ? existingApiKey : undefined;
+  const normalizedApiKey = resolvedApiKey?.trim();
+  providers["kimi-code"] = {
+    ...existingProviderRest,
+    baseUrl: KIMI_CODE_BASE_URL,
+    api: "openai-completions",
+    ...(normalizedApiKey ? { apiKey: normalizedApiKey } : {}),
+    models: mergedModels.length > 0 ? mergedModels : [defaultModel],
+  };
+
+  return {
+    ...cfg,
+    agents: {
+      ...cfg.agents,
+      defaults: {
+        ...cfg.agents?.defaults,
+        models,
+      },
+    },
+    models: {
+      mode: cfg.models?.mode ?? "merge",
+      providers,
+    },
+  };
+}
+
+export function applyKimiCodeConfig(cfg: ClawdbotConfig): ClawdbotConfig {
+  const next = applyKimiCodeProviderConfig(cfg);
+  const existingModel = next.agents?.defaults?.model;
+  return {
+    ...next,
+    agents: {
+      ...next.agents,
+      defaults: {
+        ...next.agents?.defaults,
+        model: {
+          ...(existingModel && "fallbacks" in (existingModel as Record<string, unknown>)
+            ? {
+                fallbacks: (existingModel as { fallbacks?: string[] }).fallbacks,
+              }
+            : undefined),
+          primary: KIMI_CODE_MODEL_REF,
+        },
+      },
+    },
+  };
+}
+
+export function applySyntheticProviderConfig(cfg: ClawdbotConfig): ClawdbotConfig {
   const models = { ...cfg.agents?.defaults?.models };
   models[SYNTHETIC_DEFAULT_MODEL_REF] = {
     ...models[SYNTHETIC_DEFAULT_MODEL_REF],
@@ -176,22 +270,19 @@ export function applySyntheticProviderConfig(
 
   const providers = { ...cfg.models?.providers };
   const existingProvider = providers.synthetic;
-  const existingModels = Array.isArray(existingProvider?.models)
-    ? existingProvider.models
-    : [];
-  const syntheticModels = SYNTHETIC_MODEL_CATALOG.map(
-    buildSyntheticModelDefinition,
-  );
+  const existingModels = Array.isArray(existingProvider?.models) ? existingProvider.models : [];
+  const syntheticModels = SYNTHETIC_MODEL_CATALOG.map(buildSyntheticModelDefinition);
   const mergedModels = [
     ...existingModels,
     ...syntheticModels.filter(
       (model) => !existingModels.some((existing) => existing.id === model.id),
     ),
   ];
-  const { apiKey: existingApiKey, ...existingProviderRest } =
-    (existingProvider ?? {}) as Record<string, unknown> as { apiKey?: string };
-  const resolvedApiKey =
-    typeof existingApiKey === "string" ? existingApiKey : undefined;
+  const { apiKey: existingApiKey, ...existingProviderRest } = (existingProvider ?? {}) as Record<
+    string,
+    unknown
+  > as { apiKey?: string };
+  const resolvedApiKey = typeof existingApiKey === "string" ? existingApiKey : undefined;
   const normalizedApiKey = resolvedApiKey?.trim();
   providers.synthetic = {
     ...existingProviderRest,
@@ -227,11 +318,9 @@ export function applySyntheticConfig(cfg: ClawdbotConfig): ClawdbotConfig {
       defaults: {
         ...next.agents?.defaults,
         model: {
-          ...(existingModel &&
-          "fallbacks" in (existingModel as Record<string, unknown>)
+          ...(existingModel && "fallbacks" in (existingModel as Record<string, unknown>)
             ? {
-                fallbacks: (existingModel as { fallbacks?: string[] })
-                  .fallbacks,
+                fallbacks: (existingModel as { fallbacks?: string[] }).fallbacks,
               }
             : undefined),
           primary: SYNTHETIC_DEFAULT_MODEL_REF,
@@ -268,9 +357,7 @@ export function applyAuthProfileConfig(
     existingProviderOrder && preferProfileFirst
       ? [
           params.profileId,
-          ...existingProviderOrder.filter(
-            (profileId) => profileId !== params.profileId,
-          ),
+          ...existingProviderOrder.filter((profileId) => profileId !== params.profileId),
         ]
       : existingProviderOrder;
   const order =

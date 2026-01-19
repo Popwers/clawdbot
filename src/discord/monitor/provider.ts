@@ -3,23 +3,25 @@ import { GatewayIntents, GatewayPlugin } from "@buape/carbon/gateway";
 import { Routes } from "discord-api-types/v10";
 import { resolveTextChunkLimit } from "../../auto-reply/chunk.js";
 import { listNativeCommandSpecsForConfig } from "../../auto-reply/commands-registry.js";
+import { listSkillCommandsForAgents } from "../../auto-reply/skill-commands.js";
 import type { HistoryEntry } from "../../auto-reply/reply/history.js";
+import { mergeAllowlist, summarizeMapping } from "../../channels/allowlists/resolve-utils.js";
 import {
   isNativeCommandsExplicitlyDisabled,
   resolveNativeCommandsEnabled,
+  resolveNativeSkillsEnabled,
 } from "../../config/commands.js";
 import type { ClawdbotConfig, ReplyToMode } from "../../config/config.js";
 import { loadConfig } from "../../config/config.js";
-import { danger, logVerbose, shouldLogVerbose } from "../../globals.js";
-import { getChildLogger } from "../../logging.js";
+import { danger, logVerbose, shouldLogVerbose, warn } from "../../globals.js";
+import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import { resolveDiscordAccount } from "../accounts.js";
 import { attachDiscordGatewayLogging } from "../gateway-logging.js";
-import {
-  getDiscordGatewayEmitter,
-  waitForDiscordGatewayStop,
-} from "../monitor.gateway.js";
+import { getDiscordGatewayEmitter, waitForDiscordGatewayStop } from "../monitor.gateway.js";
 import { fetchDiscordApplicationId } from "../probe.js";
+import { resolveDiscordChannelAllowlist } from "../resolve-channels.js";
+import { resolveDiscordUserAllowlist } from "../resolve-users.js";
 import { normalizeDiscordToken } from "../token.js";
 import {
   DiscordMessageListener,
@@ -28,7 +30,10 @@ import {
   registerDiscordListener,
 } from "./listeners.js";
 import { createDiscordMessageHandler } from "./message-handler.js";
-import { createDiscordNativeCommand } from "./native-command.js";
+import {
+  createDiscordCommandArgFallbackButton,
+  createDiscordNativeCommand,
+} from "./native-command.js";
 
 export type MonitorDiscordOpts = {
   token?: string;
@@ -44,8 +49,7 @@ export type MonitorDiscordOpts = {
 function summarizeAllowList(list?: Array<string | number>) {
   if (!list || list.length === 0) return "any";
   const sample = list.slice(0, 4).map((entry) => String(entry));
-  const suffix =
-    list.length > sample.length ? ` (+${list.length - sample.length})` : "";
+  const suffix = list.length > sample.length ? ` (+${list.length - sample.length})` : "";
   return `${sample.join(", ")}${suffix}`;
 }
 
@@ -53,8 +57,7 @@ function summarizeGuilds(entries?: Record<string, unknown>) {
   if (!entries || Object.keys(entries).length === 0) return "any";
   const keys = Object.keys(entries);
   const sample = keys.slice(0, 4);
-  const suffix =
-    keys.length > sample.length ? ` (+${keys.length - sample.length})` : "";
+  const suffix = keys.length > sample.length ? ` (+${keys.length - sample.length})` : "";
   return `${sample.join(", ")}${suffix}`;
 }
 
@@ -81,20 +84,29 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
 
   const discordCfg = account.config;
   const dmConfig = discordCfg.dm;
-  const guildEntries = discordCfg.guilds;
-  const groupPolicy = discordCfg.groupPolicy ?? "open";
-  const allowFrom = dmConfig?.allowFrom;
-  const mediaMaxBytes =
-    (opts.mediaMaxMb ?? discordCfg.mediaMaxMb ?? 8) * 1024 * 1024;
+  let guildEntries = discordCfg.guilds;
+  const defaultGroupPolicy = cfg.channels?.defaults?.groupPolicy;
+  const groupPolicy = discordCfg.groupPolicy ?? defaultGroupPolicy ?? "open";
+  if (
+    discordCfg.groupPolicy === undefined &&
+    discordCfg.guilds === undefined &&
+    defaultGroupPolicy === undefined &&
+    groupPolicy === "open"
+  ) {
+    runtime.log?.(
+      warn(
+        'discord: groupPolicy defaults to "open" when channels.discord is missing; set channels.discord.groupPolicy (or channels.defaults.groupPolicy) or add channels.discord.guilds to restrict access.',
+      ),
+    );
+  }
+  let allowFrom = dmConfig?.allowFrom;
+  const mediaMaxBytes = (opts.mediaMaxMb ?? discordCfg.mediaMaxMb ?? 8) * 1024 * 1024;
   const textLimit = resolveTextChunkLimit(cfg, "discord", account.accountId, {
     fallbackLimit: 2000,
   });
   const historyLimit = Math.max(
     0,
-    opts.historyLimit ??
-      discordCfg.historyLimit ??
-      cfg.messages?.groupChat?.historyLimit ??
-      20,
+    opts.historyLimit ?? discordCfg.historyLimit ?? cfg.messages?.groupChat?.historyLimit ?? 20,
   );
   const replyToMode = opts.replyToMode ?? discordCfg.replyToMode ?? "off";
   const dmEnabled = dmConfig?.enabled ?? true;
@@ -106,6 +118,11 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
     providerSetting: discordCfg.commands?.native,
     globalSetting: cfg.commands?.native,
   });
+  const nativeSkillsEnabled = resolveNativeSkillsEnabled({
+    providerId: "discord",
+    providerSetting: discordCfg.commands?.nativeSkills,
+    globalSetting: cfg.commands?.nativeSkills,
+  });
   const nativeDisabledExplicit = isNativeCommandsExplicitlyDisabled({
     providerSetting: discordCfg.commands?.native,
     globalSetting: cfg.commands?.native,
@@ -114,9 +131,188 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
   const sessionPrefix = "discord:slash";
   const ephemeralDefault = true;
 
+  if (token) {
+    if (guildEntries && Object.keys(guildEntries).length > 0) {
+      try {
+        const entries: Array<{ input: string; guildKey: string; channelKey?: string }> = [];
+        for (const [guildKey, guildCfg] of Object.entries(guildEntries)) {
+          if (guildKey === "*") continue;
+          const channels = guildCfg?.channels ?? {};
+          const channelKeys = Object.keys(channels).filter((key) => key !== "*");
+          if (channelKeys.length === 0) {
+            entries.push({ input: guildKey, guildKey });
+            continue;
+          }
+          for (const channelKey of channelKeys) {
+            entries.push({
+              input: `${guildKey}/${channelKey}`,
+              guildKey,
+              channelKey,
+            });
+          }
+        }
+        if (entries.length > 0) {
+          const resolved = await resolveDiscordChannelAllowlist({
+            token,
+            entries: entries.map((entry) => entry.input),
+          });
+          const nextGuilds = { ...guildEntries };
+          const mapping: string[] = [];
+          const unresolved: string[] = [];
+          for (const entry of resolved) {
+            const source = entries.find((item) => item.input === entry.input);
+            if (!source) continue;
+            const sourceGuild = guildEntries?.[source.guildKey] ?? {};
+            if (!entry.resolved || !entry.guildId) {
+              unresolved.push(entry.input);
+              continue;
+            }
+            mapping.push(
+              entry.channelId
+                ? `${entry.input}→${entry.guildId}/${entry.channelId}`
+                : `${entry.input}→${entry.guildId}`,
+            );
+            const existing = nextGuilds[entry.guildId] ?? {};
+            const mergedChannels = { ...sourceGuild.channels, ...existing.channels };
+            const mergedGuild = { ...sourceGuild, ...existing, channels: mergedChannels };
+            nextGuilds[entry.guildId] = mergedGuild;
+            if (source.channelKey && entry.channelId) {
+              const sourceChannel = sourceGuild.channels?.[source.channelKey];
+              if (sourceChannel) {
+                nextGuilds[entry.guildId] = {
+                  ...mergedGuild,
+                  channels: {
+                    ...mergedChannels,
+                    [entry.channelId]: {
+                      ...sourceChannel,
+                      ...mergedChannels?.[entry.channelId],
+                    },
+                  },
+                };
+              }
+            }
+          }
+          guildEntries = nextGuilds;
+          summarizeMapping("discord channels", mapping, unresolved, runtime);
+        }
+      } catch (err) {
+        runtime.log?.(`discord channel resolve failed; using config entries. ${String(err)}`);
+      }
+    }
+
+    const allowEntries =
+      allowFrom?.filter((entry) => String(entry).trim() && String(entry).trim() !== "*") ?? [];
+    if (allowEntries.length > 0) {
+      try {
+        const resolvedUsers = await resolveDiscordUserAllowlist({
+          token,
+          entries: allowEntries.map((entry) => String(entry)),
+        });
+        const mapping: string[] = [];
+        const unresolved: string[] = [];
+        const additions: string[] = [];
+        for (const entry of resolvedUsers) {
+          if (entry.resolved && entry.id) {
+            mapping.push(`${entry.input}→${entry.id}`);
+            additions.push(entry.id);
+          } else {
+            unresolved.push(entry.input);
+          }
+        }
+        allowFrom = mergeAllowlist({ existing: allowFrom, additions });
+        summarizeMapping("discord users", mapping, unresolved, runtime);
+      } catch (err) {
+        runtime.log?.(`discord user resolve failed; using config entries. ${String(err)}`);
+      }
+    }
+
+    if (guildEntries && Object.keys(guildEntries).length > 0) {
+      const userEntries = new Set<string>();
+      for (const guild of Object.values(guildEntries)) {
+        if (!guild || typeof guild !== "object") continue;
+        const users = (guild as { users?: Array<string | number> }).users;
+        if (Array.isArray(users)) {
+          for (const entry of users) {
+            const trimmed = String(entry).trim();
+            if (trimmed && trimmed !== "*") userEntries.add(trimmed);
+          }
+        }
+        const channels = (guild as { channels?: Record<string, unknown> }).channels ?? {};
+        for (const channel of Object.values(channels)) {
+          if (!channel || typeof channel !== "object") continue;
+          const channelUsers = (channel as { users?: Array<string | number> }).users;
+          if (!Array.isArray(channelUsers)) continue;
+          for (const entry of channelUsers) {
+            const trimmed = String(entry).trim();
+            if (trimmed && trimmed !== "*") userEntries.add(trimmed);
+          }
+        }
+      }
+
+      if (userEntries.size > 0) {
+        try {
+          const resolvedUsers = await resolveDiscordUserAllowlist({
+            token,
+            entries: Array.from(userEntries),
+          });
+          const resolvedMap = new Map(resolvedUsers.map((entry) => [entry.input, entry]));
+          const mapping = resolvedUsers
+            .filter((entry) => entry.resolved && entry.id)
+            .map((entry) => `${entry.input}→${entry.id}`);
+          const unresolved = resolvedUsers
+            .filter((entry) => !entry.resolved)
+            .map((entry) => entry.input);
+
+          const nextGuilds = { ...guildEntries };
+          for (const [guildKey, guildConfig] of Object.entries(guildEntries ?? {})) {
+            if (!guildConfig || typeof guildConfig !== "object") continue;
+            const nextGuild = { ...guildConfig } as Record<string, unknown>;
+            const users = (guildConfig as { users?: Array<string | number> }).users;
+            if (Array.isArray(users) && users.length > 0) {
+              const additions: string[] = [];
+              for (const entry of users) {
+                const trimmed = String(entry).trim();
+                const resolved = resolvedMap.get(trimmed);
+                if (resolved?.resolved && resolved.id) additions.push(resolved.id);
+              }
+              nextGuild.users = mergeAllowlist({ existing: users, additions });
+            }
+            const channels = (guildConfig as { channels?: Record<string, unknown> }).channels ?? {};
+            if (channels && typeof channels === "object") {
+              const nextChannels: Record<string, unknown> = { ...channels };
+              for (const [channelKey, channelConfig] of Object.entries(channels)) {
+                if (!channelConfig || typeof channelConfig !== "object") continue;
+                const channelUsers = (channelConfig as { users?: Array<string | number> }).users;
+                if (!Array.isArray(channelUsers) || channelUsers.length === 0) continue;
+                const additions: string[] = [];
+                for (const entry of channelUsers) {
+                  const trimmed = String(entry).trim();
+                  const resolved = resolvedMap.get(trimmed);
+                  if (resolved?.resolved && resolved.id) additions.push(resolved.id);
+                }
+                nextChannels[channelKey] = {
+                  ...channelConfig,
+                  users: mergeAllowlist({ existing: channelUsers, additions }),
+                };
+              }
+              nextGuild.channels = nextChannels;
+            }
+            nextGuilds[guildKey] = nextGuild;
+          }
+          guildEntries = nextGuilds;
+          summarizeMapping("discord channel users", mapping, unresolved, runtime);
+        } catch (err) {
+          runtime.log?.(
+            `discord channel user resolve failed; using config entries. ${String(err)}`,
+          );
+        }
+      }
+    }
+  }
+
   if (shouldLogVerbose()) {
     logVerbose(
-      `discord: config dm=${dmEnabled ? "on" : "off"} dmPolicy=${dmPolicy} allowFrom=${summarizeAllowList(allowFrom)} groupDm=${groupDmEnabled ? "on" : "off"} groupDmChannels=${summarizeAllowList(groupDmChannels)} groupPolicy=${groupPolicy} guilds=${summarizeGuilds(guildEntries)} historyLimit=${historyLimit} mediaMaxMb=${Math.round(mediaMaxBytes / (1024 * 1024))} native=${nativeEnabled ? "on" : "off"} accessGroups=${useAccessGroups ? "on" : "off"}`,
+      `discord: config dm=${dmEnabled ? "on" : "off"} dmPolicy=${dmPolicy} allowFrom=${summarizeAllowList(allowFrom)} groupDm=${groupDmEnabled ? "on" : "off"} groupDmChannels=${summarizeAllowList(groupDmChannels)} groupPolicy=${groupPolicy} guilds=${summarizeGuilds(guildEntries)} historyLimit=${historyLimit} mediaMaxMb=${Math.round(mediaMaxBytes / (1024 * 1024))} native=${nativeEnabled ? "on" : "off"} nativeSkills=${nativeSkillsEnabled ? "on" : "off"} accessGroups=${useAccessGroups ? "on" : "off"}`,
     );
   }
 
@@ -125,9 +321,9 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
     throw new Error("Failed to resolve Discord application id");
   }
 
-  const commandSpecs = nativeEnabled
-    ? listNativeCommandSpecsForConfig(cfg)
-    : [];
+  const skillCommands =
+    nativeEnabled && nativeSkillsEnabled ? listSkillCommandsForAgents({ cfg }) : [];
+  const commandSpecs = nativeEnabled ? listNativeCommandSpecsForConfig(cfg, { skillCommands }) : [];
   const commands = commandSpecs.map((spec) =>
     createDiscordNativeCommand({
       command: spec,
@@ -147,15 +343,18 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
       publicKey: "a",
       token,
       autoDeploy: nativeEnabled,
-      eventQueue: {
-        // Auto-threading (create thread + generate reply + post) can exceed the default
-        // 30s listener timeout in some environments.
-        listenerTimeout: 120_000,
-      },
     },
     {
       commands,
       listeners: [],
+      components: [
+        createDiscordCommandArgFallbackButton({
+          cfg,
+          discordConfig: discordCfg,
+          accountId: account.accountId,
+          sessionPrefix,
+        }),
+      ],
     },
     [
       new GatewayPlugin({
@@ -174,7 +373,7 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
     ],
   );
 
-  const logger = getChildLogger({ module: "discord-auto-reply" });
+  const logger = createSubsystemLogger("discord/monitor");
   const guildHistories = new Map<string, HistoryEntry[]>();
   let botUserId: string | undefined;
 
@@ -190,9 +389,7 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
     const botUser = await client.fetchUser("@me");
     botUserId = botUser?.id;
   } catch (err) {
-    runtime.error?.(
-      danger(`discord: failed to fetch bot identity: ${String(err)}`),
-    );
+    runtime.error?.(danger(`discord: failed to fetch bot identity: ${String(err)}`));
   }
 
   const messageHandler = createDiscordMessageHandler({
@@ -214,10 +411,7 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
     guildEntries,
   });
 
-  registerDiscordListener(
-    client.listeners,
-    new DiscordMessageListener(messageHandler, logger),
-  );
+  registerDiscordListener(client.listeners, new DiscordMessageListener(messageHandler, logger));
   registerDiscordListener(
     client.listeners,
     new DiscordReactionListener({
@@ -249,6 +443,17 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
     emitter: gatewayEmitter,
     runtime,
   });
+  const abortSignal = opts.abortSignal;
+  const onAbort = () => {
+    if (!gateway) return;
+    gateway.options.reconnect = { maxAttempts: 0 };
+    gateway.disconnect();
+  };
+  if (abortSignal?.aborted) {
+    onAbort();
+  } else {
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+  }
   // Timeout to detect zombie connections where HELLO is never received.
   const HELLO_TIMEOUT_MS = 30000;
   let helloTimeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -278,15 +483,14 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
             disconnect: () => gateway.disconnect(),
           }
         : undefined,
-      abortSignal: opts.abortSignal,
+      abortSignal,
       onGatewayError: (err) => {
         runtime.error?.(danger(`discord gateway error: ${String(err)}`));
       },
       shouldStopOnError: (err) => {
         const message = String(err);
         return (
-          message.includes("Max reconnect attempts") ||
-          message.includes("Fatal Gateway error")
+          message.includes("Max reconnect attempts") || message.includes("Fatal Gateway error")
         );
       },
     });
@@ -294,6 +498,7 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
     stopGatewayLogging();
     if (helloTimeoutId) clearTimeout(helloTimeoutId);
     gatewayEmitter?.removeListener("debug", onGatewayDebug);
+    abortSignal?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -303,16 +508,11 @@ async function clearDiscordNativeCommands(params: {
   runtime: RuntimeEnv;
 }) {
   try {
-    await params.client.rest.put(
-      Routes.applicationCommands(params.applicationId),
-      {
-        body: [],
-      },
-    );
+    await params.client.rest.put(Routes.applicationCommands(params.applicationId), {
+      body: [],
+    });
     logVerbose("discord: cleared native commands (commands.native=false)");
   } catch (err) {
-    params.runtime.error?.(
-      danger(`discord: failed to clear native commands: ${String(err)}`),
-    );
+    params.runtime.error?.(danger(`discord: failed to clear native commands: ${String(err)}`));
   }
 }

@@ -1,8 +1,5 @@
 import { intro as clackIntro, outro as clackOutro } from "@clack/prompts";
-import {
-  resolveAgentWorkspaceDir,
-  resolveDefaultAgentId,
-} from "../agents/agent-scope.js";
+import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { loadModelCatalog } from "../agents/model-catalog.js";
 import {
@@ -19,10 +16,7 @@ import type { RuntimeEnv } from "../runtime.js";
 import { defaultRuntime } from "../runtime.js";
 import { note } from "../terminal/note.js";
 import { stylePromptTitle } from "../terminal/prompt-style.js";
-import {
-  maybeRepairAnthropicOAuthProfileId,
-  noteAuthProfileHealth,
-} from "./doctor-auth.js";
+import { maybeRepairAnthropicOAuthProfileId, noteAuthProfileHealth } from "./doctor-auth.js";
 import { loadAndMaybeMigrateDoctorConfig } from "./doctor-config-flow.js";
 import { maybeRepairGatewayDaemon } from "./doctor-gateway-daemon-flow.js";
 import { checkGatewayHealth } from "./doctor-gateway-health.js";
@@ -32,40 +26,27 @@ import {
   maybeScanExtraGatewayServices,
 } from "./doctor-gateway-services.js";
 import { noteSourceInstallIssues } from "./doctor-install.js";
-import { maybeMigrateLegacyConfigFile } from "./doctor-legacy-config.js";
-import { noteMacLaunchAgentOverrides } from "./doctor-platform-notes.js";
+import {
+  noteMacLaunchAgentOverrides,
+  noteMacLaunchctlGatewayEnvOverrides,
+} from "./doctor-platform-notes.js";
 import { createDoctorPrompter, type DoctorOptions } from "./doctor-prompter.js";
-import {
-  maybeRepairSandboxImages,
-  noteSandboxScopeWarnings,
-} from "./doctor-sandbox.js";
+import { maybeRepairSandboxImages, noteSandboxScopeWarnings } from "./doctor-sandbox.js";
 import { noteSecurityWarnings } from "./doctor-security.js";
-import {
-  noteStateIntegrity,
-  noteWorkspaceBackupTip,
-} from "./doctor-state-integrity.js";
+import { noteStateIntegrity, noteWorkspaceBackupTip } from "./doctor-state-integrity.js";
 import {
   detectLegacyStateMigrations,
   runLegacyStateMigrations,
 } from "./doctor-state-migrations.js";
 import { maybeRepairUiProtocolFreshness } from "./doctor-ui.js";
 import { maybeOfferUpdateBeforeDoctor } from "./doctor-update.js";
-import {
-  MEMORY_SYSTEM_PROMPT,
-  shouldSuggestMemorySystem,
-} from "./doctor-workspace.js";
+import { MEMORY_SYSTEM_PROMPT, shouldSuggestMemorySystem } from "./doctor-workspace.js";
 import { noteWorkspaceStatus } from "./doctor-workspace-status.js";
-import {
-  applyWizardMetadata,
-  printWizardHeader,
-  randomToken,
-} from "./onboard-helpers.js";
+import { applyWizardMetadata, printWizardHeader, randomToken } from "./onboard-helpers.js";
 import { ensureSystemdUserLingerInteractive } from "./systemd-linger.js";
 
-const intro = (message: string) =>
-  clackIntro(stylePromptTitle(message) ?? message);
-const outro = (message: string) =>
-  clackOutro(stylePromptTitle(message) ?? message);
+const intro = (message: string) => clackIntro(stylePromptTitle(message) ?? message);
+const outro = (message: string) => clackOutro(stylePromptTitle(message) ?? message);
 
 function resolveMode(cfg: ClawdbotConfig): "local" | "remote" {
   return cfg.gateway?.mode === "remote" ? "remote" : "local";
@@ -97,8 +78,6 @@ export async function doctorCommand(
   await maybeRepairUiProtocolFreshness(runtime, prompter);
   noteSourceInstallIssues(root);
 
-  await maybeMigrateLegacyConfigFile(runtime);
-
   const configResult = await loadAndMaybeMigrateDoctorConfig({
     options,
     confirm: (p) => prompter.confirm(p),
@@ -109,8 +88,7 @@ export async function doctorCommand(
   await noteAuthProfileHealth({
     cfg,
     prompter,
-    allowKeychainPrompt:
-      options.nonInteractive !== true && Boolean(process.stdin.isTTY),
+    allowKeychainPrompt: options.nonInteractive !== true && Boolean(process.stdin.isTTY),
   });
   const gatewayDetails = buildGatewayConnectionDetails({ config: cfg });
   if (gatewayDetails.remoteFallbackNote) {
@@ -119,11 +97,8 @@ export async function doctorCommand(
   if (resolveMode(cfg) === "local") {
     const authMode = cfg.gateway?.auth?.mode;
     const token =
-      typeof cfg.gateway?.auth?.token === "string"
-        ? cfg.gateway?.auth?.token.trim()
-        : "";
-    const needsToken =
-      authMode !== "password" && (authMode !== "token" || !token);
+      typeof cfg.gateway?.auth?.token === "string" ? cfg.gateway?.auth?.token.trim() : "";
+    const needsToken = authMode !== "password" && (authMode !== "token" || !token);
     if (needsToken) {
       note(
         "Gateway auth is off or missing a token. Token auth is now the recommended default (including loopback).",
@@ -179,29 +154,16 @@ export async function doctorCommand(
     }
   }
 
-  await noteStateIntegrity(
-    cfg,
-    prompter,
-    configResult.path ?? CONFIG_PATH_CLAWDBOT,
-  );
+  await noteStateIntegrity(cfg, prompter, configResult.path ?? CONFIG_PATH_CLAWDBOT);
 
   cfg = await maybeRepairSandboxImages(cfg, runtime, prompter);
   noteSandboxScopeWarnings(cfg);
 
-  await maybeMigrateLegacyGatewayService(
-    cfg,
-    resolveMode(cfg),
-    runtime,
-    prompter,
-  );
+  await maybeMigrateLegacyGatewayService(cfg, resolveMode(cfg), runtime, prompter);
   await maybeScanExtraGatewayServices(options);
-  await maybeRepairGatewayServiceConfig(
-    cfg,
-    resolveMode(cfg),
-    runtime,
-    prompter,
-  );
+  await maybeRepairGatewayServiceConfig(cfg, resolveMode(cfg), runtime, prompter);
   await noteMacLaunchAgentOverrides();
+  await noteMacLaunchctlGatewayEnvOverrides(cfg);
 
   await noteSecurityWarnings(cfg);
 
@@ -211,17 +173,13 @@ export async function doctorCommand(
       defaultProvider: DEFAULT_PROVIDER,
     });
     if (!hooksModelRef) {
-      note(
-        `- hooks.gmail.model "${cfg.hooks.gmail.model}" could not be resolved`,
-        "Hooks",
-      );
+      note(`- hooks.gmail.model "${cfg.hooks.gmail.model}" could not be resolved`, "Hooks");
     } else {
-      const { provider: defaultProvider, model: defaultModel } =
-        resolveConfiguredModelRef({
-          cfg,
-          defaultProvider: DEFAULT_PROVIDER,
-          defaultModel: DEFAULT_MODEL,
-        });
+      const { provider: defaultProvider, model: defaultModel } = resolveConfiguredModelRef({
+        cfg,
+        defaultProvider: DEFAULT_PROVIDER,
+        defaultModel: DEFAULT_MODEL,
+      });
       const catalog = await loadModelCatalog({ config: cfg });
       const status = getModelRefStatus({
         cfg,
@@ -255,10 +213,7 @@ export async function doctorCommand(
     const service = resolveGatewayService();
     let loaded = false;
     try {
-      loaded = await service.isLoaded({
-        env: process.env,
-        profile: process.env.CLAWDBOT_PROFILE,
-      });
+      loaded = await service.isLoaded({ env: process.env });
     } catch {
       loaded = false;
     }
@@ -278,7 +233,11 @@ export async function doctorCommand(
 
   noteWorkspaceStatus(cfg);
 
-  const { healthOk } = await checkGatewayHealth({ runtime, cfg });
+  const { healthOk } = await checkGatewayHealth({
+    runtime,
+    cfg,
+    timeoutMs: options.nonInteractive === true ? 3000 : 10_000,
+  });
   await maybeRepairGatewayDaemon({
     cfg,
     runtime,
@@ -288,15 +247,16 @@ export async function doctorCommand(
     healthOk,
   });
 
-  cfg = applyWizardMetadata(cfg, { command: "doctor", mode: resolveMode(cfg) });
-  await writeConfigFile(cfg);
-  runtime.log(`Updated ${CONFIG_PATH_CLAWDBOT}`);
+  if (prompter.shouldRepair) {
+    cfg = applyWizardMetadata(cfg, { command: "doctor", mode: resolveMode(cfg) });
+    await writeConfigFile(cfg);
+    runtime.log(`Updated ${CONFIG_PATH_CLAWDBOT}`);
+  } else {
+    runtime.log('Run "clawdbot doctor --fix" to apply changes.');
+  }
 
   if (options.workspaceSuggestions !== false) {
-    const workspaceDir = resolveAgentWorkspaceDir(
-      cfg,
-      resolveDefaultAgentId(cfg),
-    );
+    const workspaceDir = resolveAgentWorkspaceDir(cfg, resolveDefaultAgentId(cfg));
     noteWorkspaceBackupTip(workspaceDir);
     if (await shouldSuggestMemorySystem(workspaceDir)) {
       note(MEMORY_SYSTEM_PROMPT, "Workspace");

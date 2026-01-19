@@ -124,10 +124,21 @@ Save to `~/.clawdbot/clawdbot.json` and you can DM the bot from that number.
 
   // Tooling
   tools: {
-    audio: {
-      transcription: {
-        args: ["--model", "base", "{{MediaPath}}"],
+    media: {
+      audio: {
+        enabled: true,
+        maxBytes: 20971520,
+        models: [
+          { provider: "openai", model: "whisper-1" },
+          // Optional CLI fallback (Whisper binary):
+          // { type: "cli", command: "whisper", args: ["--model", "base", "{{MediaPath}}"] }
+        ],
         timeoutSeconds: 120
+      },
+      video: {
+        enabled: true,
+        maxBytes: 52428800,
+        models: [{ provider: "google", model: "gemini-3-flash-preview" }]
       }
     }
   },
@@ -135,7 +146,11 @@ Save to `~/.clawdbot/clawdbot.json` and you can DM the bot from that number.
   // Session behavior
   session: {
     scope: "per-sender",
-    idleMinutes: 60,
+    reset: {
+      mode: "daily",
+      atHour: 4,
+      idleMinutes: 60
+    },
     heartbeatIdleMinutes: 120,
     resetTriggers: ["/new", "/reset"],
     store: "~/.clawdbot/agents/default/sessions/sessions.json",
@@ -246,10 +261,9 @@ Save to `~/.clawdbot/clawdbot.json` and you can DM the bot from that number.
         ackMaxChars: 300
       },
       memorySearch: {
-        provider: "openai",
-        model: "text-embedding-004",
+        provider: "gemini",
+        model: "gemini-embedding-001",
         remote: {
-          baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
           apiKey: "${GEMINI_API_KEY}"
         }
       },
@@ -384,7 +398,7 @@ Save to `~/.clawdbot/clawdbot.json` and you can DM the bot from that number.
   },
 
   skills: {
-    allowBundled: ["brave-search", "gemini"],
+    allowBundled: ["gemini", "peekaboo"],
     load: {
       extraDirs: ["~/Projects/agent-scripts/skills"]
     },
@@ -450,6 +464,44 @@ Save to `~/.clawdbot/clawdbot.json` and you can DM the bot from that number.
     model: {
       primary: "anthropic/claude-sonnet-4-5",
       fallbacks: ["anthropic/claude-opus-4-5"]
+    }
+  }
+}
+```
+
+### Anthropic subscription + API key, MiniMax fallback
+```json5
+{
+  auth: {
+    profiles: {
+      "anthropic:subscription": {
+        provider: "anthropic",
+        mode: "oauth",
+        email: "user@example.com"
+      },
+      "anthropic:api": {
+        provider: "anthropic",
+        mode: "api_key"
+      }
+    },
+    order: {
+      anthropic: ["anthropic:subscription", "anthropic:api"]
+    }
+  },
+  models: {
+    providers: {
+      minimax: {
+        baseUrl: "https://api.minimax.io/anthropic",
+        api: "anthropic-messages",
+        apiKey: "${MINIMAX_API_KEY}"
+      }
+    }
+  },
+  agent: {
+    workspace: "~/clawd",
+    model: {
+      primary: "anthropic/claude-opus-4-5",
+      fallbacks: ["minimax/MiniMax-M2.1"]
     }
   }
 }

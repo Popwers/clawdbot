@@ -12,7 +12,7 @@ describe("config env vars", () => {
         path.join(configDir, "clawdbot.json"),
         JSON.stringify(
           {
-            env: { OPENROUTER_API_KEY: "config-key" },
+            env: { vars: { OPENROUTER_API_KEY: "config-key" } },
           },
           null,
           2,
@@ -36,7 +36,7 @@ describe("config env vars", () => {
         path.join(configDir, "clawdbot.json"),
         JSON.stringify(
           {
-            env: { OPENROUTER_API_KEY: "config-key" },
+            env: { vars: { OPENROUTER_API_KEY: "config-key" } },
           },
           null,
           2,
@@ -44,14 +44,11 @@ describe("config env vars", () => {
         "utf-8",
       );
 
-      await withEnvOverride(
-        { OPENROUTER_API_KEY: "existing-key" },
-        async () => {
-          const { loadConfig } = await import("./config.js");
-          loadConfig();
-          expect(process.env.OPENROUTER_API_KEY).toBe("existing-key");
-        },
-      );
+      await withEnvOverride({ OPENROUTER_API_KEY: "existing-key" }, async () => {
+        const { loadConfig } = await import("./config.js");
+        loadConfig();
+        expect(process.env.OPENROUTER_API_KEY).toBe("existing-key");
+      });
     });
   });
 

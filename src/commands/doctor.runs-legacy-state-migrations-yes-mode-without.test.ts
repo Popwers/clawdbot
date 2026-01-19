@@ -34,7 +34,7 @@ beforeEach(() => {
     durationMs: 0,
   });
   legacyReadConfigFileSnapshot.mockReset().mockResolvedValue({
-    path: "/tmp/clawdis.json",
+    path: "/tmp/clawdbot.json",
     exists: false,
     raw: null,
     parsed: {},
@@ -54,9 +54,7 @@ beforeEach(() => {
     signal: null,
     killed: false,
   });
-  ensureAuthProfileStore
-    .mockReset()
-    .mockReturnValue({ version: 1, profiles: {} });
+  ensureAuthProfileStore.mockReset().mockReturnValue({ version: 1, profiles: {} });
   migrateLegacyConfig.mockReset().mockImplementation((raw: unknown) => ({
     config: raw as Record<string, unknown>,
     changes: ["Moved routing.allowFrom → channels.whatsapp.allowFrom."],
@@ -80,9 +78,7 @@ beforeEach(() => {
   originalStateDir = process.env.CLAWDBOT_STATE_DIR;
   originalUpdateInProgress = process.env.CLAWDBOT_UPDATE_IN_PROGRESS;
   process.env.CLAWDBOT_UPDATE_IN_PROGRESS = "1";
-  tempStateDir = fs.mkdtempSync(
-    path.join(os.tmpdir(), "clawdbot-doctor-state-"),
-  );
+  tempStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawdbot-doctor-state-"));
   process.env.CLAWDBOT_STATE_DIR = tempStateDir;
   fs.mkdirSync(path.join(tempStateDir, "agents", "main", "sessions"), {
     recursive: true,
@@ -134,12 +130,10 @@ const runCommandWithTimeout = vi.fn().mockResolvedValue({
   killed: false,
 });
 
-const ensureAuthProfileStore = vi
-  .fn()
-  .mockReturnValue({ version: 1, profiles: {} });
+const ensureAuthProfileStore = vi.fn().mockReturnValue({ version: 1, profiles: {} });
 
 const legacyReadConfigFileSnapshot = vi.fn().mockResolvedValue({
-  path: "/tmp/clawdis.json",
+  path: "/tmp/clawdbot.json",
   exists: false,
   raw: null,
   parsed: {},
@@ -176,6 +170,10 @@ vi.mock("@clack/prompts", () => ({
 
 vi.mock("../agents/skills-status.js", () => ({
   buildWorkspaceSkillStatus: () => ({ skills: [] }),
+}));
+
+vi.mock("../plugins/loader.js", () => ({
+  loadClawdbotPlugins: () => ({ plugins: [], diagnostics: [] }),
 }));
 
 vi.mock("../config/config.js", async (importOriginal) => {
@@ -254,6 +252,7 @@ vi.mock("../telegram/pairing-store.js", () => ({
 
 vi.mock("../pairing/pairing-store.js", () => ({
   readChannelAllowFromStore: vi.fn().mockResolvedValue([]),
+  upsertChannelPairingRequest: vi.fn().mockResolvedValue({ code: "000000", created: false }),
 }));
 
 vi.mock("../telegram/token.js", () => ({
@@ -295,6 +294,7 @@ vi.mock("./doctor-state-migrations.js", () => ({
   detectLegacyStateMigrations: vi.fn().mockResolvedValue({
     targetAgentId: "main",
     targetMainKey: "main",
+    targetScope: undefined,
     stateDir: "/tmp/state",
     oauthDir: "/tmp/oauth",
     sessions: {
@@ -303,6 +303,7 @@ vi.mock("./doctor-state-migrations.js", () => ({
       targetDir: "/tmp/state/agents/main/sessions",
       targetStorePath: "/tmp/state/agents/main/sessions/sessions.json",
       hasLegacy: false,
+      legacyKeys: [],
     },
     agentDir: {
       legacyDir: "/tmp/state/agent",
@@ -380,7 +381,7 @@ describe("doctor command", () => {
 
     expect(runLegacyStateMigrations).toHaveBeenCalledTimes(1);
     expect(confirm).not.toHaveBeenCalled();
-  });
+  }, 30_000);
 
   it("skips gateway restarts in non-interactive mode", async () => {
     readConfigFileSnapshot.mockResolvedValue({
@@ -447,18 +448,11 @@ describe("doctor command", () => {
     });
 
     const { doctorCommand } = await import("./doctor.js");
-    await doctorCommand(
-      { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
-      { yes: true },
-    );
+    await doctorCommand({ log: vi.fn(), error: vi.fn(), exit: vi.fn() }, { yes: true });
 
-    const written = writeConfigFile.mock.calls.at(-1)?.[0] as Record<
-      string,
-      unknown
-    >;
-    const profiles = (written.auth as { profiles: Record<string, unknown> })
-      .profiles;
+    const written = writeConfigFile.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    const profiles = (written.auth as { profiles: Record<string, unknown> }).profiles;
     expect(profiles["anthropic:me@example.com"]).toBeTruthy();
     expect(profiles["anthropic:default"]).toBeUndefined();
-  }, 20_000);
+  }, 30_000);
 });

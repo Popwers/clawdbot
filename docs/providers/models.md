@@ -23,9 +23,10 @@ model as `provider/model`.
 ## Supported providers (starter set)
 
 - [OpenAI (API + Codex)](/providers/openai)
-- [Anthropic (API + Claude CLI)](/providers/anthropic)
+- [Anthropic (API + Claude Code CLI)](/providers/anthropic)
 - [OpenRouter](/providers/openrouter)
-- [Moonshot AI (Kimi)](/providers/moonshot)
+- [Vercel AI Gateway](/providers/vercel-ai-gateway)
+- [Moonshot AI (Kimi + Kimi Code)](/providers/moonshot)
 - [Synthetic](/providers/synthetic)
 - [OpenCode Zen](/providers/opencode)
 - [Z.AI](/providers/zai)

@@ -15,6 +15,8 @@ export type InboundAccessControlResult = {
   resolvedAccountId: string;
 };
 
+const PAIRING_REPLY_HISTORY_GRACE_MS = 30_000;
+
 export async function checkInboundAccessControl(params: {
   accountId: string;
   from: string;
@@ -23,6 +25,9 @@ export async function checkInboundAccessControl(params: {
   group: boolean;
   pushName?: string;
   isFromMe: boolean;
+  messageTimestampMs?: number;
+  connectedAtMs?: number;
+  pairingGraceMs?: number;
   sock: {
     sendMessage: (jid: string, content: { text: string }) => Promise<unknown>;
   };
@@ -35,26 +40,27 @@ export async function checkInboundAccessControl(params: {
   });
   const dmPolicy = cfg.channels?.whatsapp?.dmPolicy ?? "pairing";
   const configuredAllowFrom = account.allowFrom;
-  const storeAllowFrom = await readChannelAllowFromStore("whatsapp").catch(
-    () => [],
-  );
+  const storeAllowFrom = await readChannelAllowFromStore("whatsapp").catch(() => []);
   // Without user config, default to self-only DM access so the owner can talk to themselves.
   const combinedAllowFrom = Array.from(
     new Set([...(configuredAllowFrom ?? []), ...storeAllowFrom]),
   );
   const defaultAllowFrom =
-    combinedAllowFrom.length === 0 && params.selfE164
-      ? [params.selfE164]
-      : undefined;
-  const allowFrom =
-    combinedAllowFrom.length > 0 ? combinedAllowFrom : defaultAllowFrom;
+    combinedAllowFrom.length === 0 && params.selfE164 ? [params.selfE164] : undefined;
+  const allowFrom = combinedAllowFrom.length > 0 ? combinedAllowFrom : defaultAllowFrom;
   const groupAllowFrom =
     account.groupAllowFrom ??
-    (configuredAllowFrom && configuredAllowFrom.length > 0
-      ? configuredAllowFrom
-      : undefined);
+    (configuredAllowFrom && configuredAllowFrom.length > 0 ? configuredAllowFrom : undefined);
   const isSamePhone = params.from === params.selfE164;
   const isSelfChat = isSelfChatMode(params.selfE164, configuredAllowFrom);
+  const pairingGraceMs =
+    typeof params.pairingGraceMs === "number" && params.pairingGraceMs > 0
+      ? params.pairingGraceMs
+      : PAIRING_REPLY_HISTORY_GRACE_MS;
+  const suppressPairingReply =
+    typeof params.connectedAtMs === "number" &&
+    typeof params.messageTimestampMs === "number" &&
+    params.messageTimestampMs < params.connectedAtMs - pairingGraceMs;
 
   // Pre-compute normalized allowlists for filtering.
   const dmHasWildcard = allowFrom?.includes("*") ?? false;
@@ -72,7 +78,8 @@ export async function checkInboundAccessControl(params: {
   // - "open": groups bypass allowFrom, only mention-gating applies
   // - "disabled": block all group messages entirely
   // - "allowlist": only allow group messages from senders in groupAllowFrom/allowFrom
-  const groupPolicy = account.groupPolicy ?? "open";
+  const defaultGroupPolicy = cfg.channels?.defaults?.groupPolicy;
+  const groupPolicy = account.groupPolicy ?? defaultGroupPolicy ?? "open";
   if (params.group && groupPolicy === "disabled") {
     logVerbose("Blocked group message (groupPolicy: disabled)");
     return {
@@ -84,9 +91,7 @@ export async function checkInboundAccessControl(params: {
   }
   if (params.group && groupPolicy === "allowlist") {
     if (!groupAllowFrom || groupAllowFrom.length === 0) {
-      logVerbose(
-        "Blocked group message (groupPolicy: allowlist, no groupAllowFrom)",
-      );
+      logVerbose("Blocked group message (groupPolicy: allowlist, no groupAllowFrom)");
       return {
         allowed: false,
         shouldMarkRead: false,
@@ -96,8 +101,7 @@ export async function checkInboundAccessControl(params: {
     }
     const senderAllowed =
       groupHasWildcard ||
-      (params.senderE164 != null &&
-        normalizedGroupAllowFrom.includes(params.senderE164));
+      (params.senderE164 != null && normalizedGroupAllowFrom.includes(params.senderE164));
     if (!senderAllowed) {
       logVerbose(
         `Blocked group message from ${params.senderE164 ?? "unknown sender"} (groupPolicy: allowlist)`,
@@ -135,37 +139,36 @@ export async function checkInboundAccessControl(params: {
       const candidate = params.from;
       const allowed =
         dmHasWildcard ||
-        (normalizedAllowFrom.length > 0 &&
-          normalizedAllowFrom.includes(candidate));
+        (normalizedAllowFrom.length > 0 && normalizedAllowFrom.includes(candidate));
       if (!allowed) {
         if (dmPolicy === "pairing") {
-          const { code, created } = await upsertChannelPairingRequest({
-            channel: "whatsapp",
-            id: candidate,
-            meta: { name: (params.pushName ?? "").trim() || undefined },
-          });
-          if (created) {
-            logVerbose(
-              `whatsapp pairing request sender=${candidate} name=${params.pushName ?? "unknown"}`,
-            );
-            try {
-              await params.sock.sendMessage(params.remoteJid, {
-                text: buildPairingReply({
-                  channel: "whatsapp",
-                  idLine: `Your WhatsApp phone number: ${candidate}`,
-                  code,
-                }),
-              });
-            } catch (err) {
+          if (suppressPairingReply) {
+            logVerbose(`Skipping pairing reply for historical DM from ${candidate}.`);
+          } else {
+            const { code, created } = await upsertChannelPairingRequest({
+              channel: "whatsapp",
+              id: candidate,
+              meta: { name: (params.pushName ?? "").trim() || undefined },
+            });
+            if (created) {
               logVerbose(
-                `whatsapp pairing reply failed for ${candidate}: ${String(err)}`,
+                `whatsapp pairing request sender=${candidate} name=${params.pushName ?? "unknown"}`,
               );
+              try {
+                await params.sock.sendMessage(params.remoteJid, {
+                  text: buildPairingReply({
+                    channel: "whatsapp",
+                    idLine: `Your WhatsApp phone number: ${candidate}`,
+                    code,
+                  }),
+                });
+              } catch (err) {
+                logVerbose(`whatsapp pairing reply failed for ${candidate}: ${String(err)}`);
+              }
             }
           }
         } else {
-          logVerbose(
-            `Blocked unauthorized sender ${candidate} (dmPolicy=${dmPolicy})`,
-          );
+          logVerbose(`Blocked unauthorized sender ${candidate} (dmPolicy=${dmPolicy})`);
         }
         return {
           allowed: false,

@@ -1,7 +1,4 @@
-import type {
-  AgentMessage,
-  AgentToolResult,
-} from "@mariozechner/pi-agent-core";
+import type { AgentMessage, AgentToolResult } from "@mariozechner/pi-agent-core";
 
 import { sanitizeToolCallIdsForCloudCodeAssist } from "../tool-call-id.js";
 import { sanitizeContentBlocksImages } from "../tool-images.js";
@@ -33,7 +30,15 @@ function isEmptyAssistantErrorMessage(
 export async function sanitizeSessionMessagesImages(
   messages: AgentMessage[],
   label: string,
-  options?: { sanitizeToolCallIds?: boolean; enforceToolCallLast?: boolean },
+  options?: {
+    sanitizeToolCallIds?: boolean;
+    enforceToolCallLast?: boolean;
+    preserveSignatures?: boolean;
+    sanitizeThoughtSignatures?: {
+      allowBase64Only?: boolean;
+      includeCamelCase?: boolean;
+    };
+  },
 ): Promise<AgentMessage[]> {
   // We sanitize historical session messages because Anthropic can reject a request
   // if the transcript contains oversized base64 images (see MAX_IMAGE_DIMENSION_PX).
@@ -79,13 +84,17 @@ export async function sanitizeSessionMessagesImages(
       }
       const content = assistantMsg.content;
       if (Array.isArray(content)) {
-        const strippedContent = stripThoughtSignatures(content);
+        const strippedContent = options?.preserveSignatures
+          ? content // Keep signatures for Antigravity Claude
+          : stripThoughtSignatures(content, options?.sanitizeThoughtSignatures); // Strip for Gemini
+
         const filteredContent = strippedContent.filter((block) => {
           if (!block || typeof block !== "object") return true;
           const rec = block as { type?: unknown; text?: unknown };
           if (rec.type !== "text" || typeof rec.text !== "string") return true;
           return rec.text.trim().length > 0;
         });
+
         const normalizedContent = options?.enforceToolCallLast
           ? (() => {
               let lastToolIndex = -1;
@@ -93,11 +102,7 @@ export async function sanitizeSessionMessagesImages(
                 const block = filteredContent[i];
                 if (!block || typeof block !== "object") continue;
                 const type = (block as { type?: unknown }).type;
-                if (
-                  type === "functionCall" ||
-                  type === "toolUse" ||
-                  type === "toolCall"
-                ) {
+                if (type === "functionCall" || type === "toolUse" || type === "toolCall") {
                   lastToolIndex = i;
                   break;
                 }

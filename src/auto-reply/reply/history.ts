@@ -1,7 +1,6 @@
 import { CURRENT_MESSAGE_MARKER } from "./mentions.js";
 
-export const HISTORY_CONTEXT_MARKER =
-  "[Chat messages since your last reply - for context]";
+export const HISTORY_CONTEXT_MARKER = "[Chat messages since your last reply - for context]";
 export const DEFAULT_GROUP_HISTORY_LIMIT = 50;
 
 export type HistoryEntry = {
@@ -19,21 +18,17 @@ export function buildHistoryContext(params: {
   const { historyText, currentMessage } = params;
   const lineBreak = params.lineBreak ?? "\n";
   if (!historyText.trim()) return currentMessage;
-  return [
-    HISTORY_CONTEXT_MARKER,
-    historyText,
-    "",
-    CURRENT_MESSAGE_MARKER,
-    currentMessage,
-  ].join(lineBreak);
+  return [HISTORY_CONTEXT_MARKER, historyText, "", CURRENT_MESSAGE_MARKER, currentMessage].join(
+    lineBreak,
+  );
 }
 
-export function appendHistoryEntry(params: {
-  historyMap: Map<string, HistoryEntry[]>;
+export function appendHistoryEntry<T extends HistoryEntry>(params: {
+  historyMap: Map<string, T[]>;
   historyKey: string;
-  entry: HistoryEntry;
+  entry: T;
   limit: number;
-}): HistoryEntry[] {
+}): T[] {
   const { historyMap, historyKey, entry } = params;
   if (params.limit <= 0) return [];
   const history = historyMap.get(historyKey) ?? [];
@@ -41,6 +36,34 @@ export function appendHistoryEntry(params: {
   while (history.length > params.limit) history.shift();
   historyMap.set(historyKey, history);
   return history;
+}
+
+export function recordPendingHistoryEntry<T extends HistoryEntry>(params: {
+  historyMap: Map<string, T[]>;
+  historyKey: string;
+  entry: T;
+  limit: number;
+}): T[] {
+  return appendHistoryEntry(params);
+}
+
+export function buildPendingHistoryContextFromMap(params: {
+  historyMap: Map<string, HistoryEntry[]>;
+  historyKey: string;
+  limit: number;
+  currentMessage: string;
+  formatEntry: (entry: HistoryEntry) => string;
+  lineBreak?: string;
+}): string {
+  if (params.limit <= 0) return params.currentMessage;
+  const entries = params.historyMap.get(params.historyKey) ?? [];
+  return buildHistoryContextFromEntries({
+    entries,
+    currentMessage: params.currentMessage,
+    formatEntry: params.formatEntry,
+    lineBreak: params.lineBreak,
+    excludeLast: false,
+  });
 }
 
 export function buildHistoryContextFromMap(params: {
@@ -86,8 +109,7 @@ export function buildHistoryContextFromEntries(params: {
   excludeLast?: boolean;
 }): string {
   const lineBreak = params.lineBreak ?? "\n";
-  const entries =
-    params.excludeLast === false ? params.entries : params.entries.slice(0, -1);
+  const entries = params.excludeLast === false ? params.entries : params.entries.slice(0, -1);
   if (entries.length === 0) return params.currentMessage;
   const historyText = entries.map(params.formatEntry).join(lineBreak);
   return buildHistoryContext({

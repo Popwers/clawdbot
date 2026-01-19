@@ -8,43 +8,87 @@ import {
 } from "@mariozechner/pi-coding-agent";
 
 import type { ClawdbotConfig } from "../../config/config.js";
+import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { CONFIG_DIR, resolveUserPath } from "../../utils.js";
 import { resolveBundledSkillsDir } from "./bundled-dir.js";
 import { shouldIncludeSkill } from "./config.js";
-import { parseFrontmatter, resolveClawdbotMetadata } from "./frontmatter.js";
+import {
+  parseFrontmatter,
+  resolveClawdbotMetadata,
+  resolveSkillInvocationPolicy,
+} from "./frontmatter.js";
 import { serializeByKey } from "./serialize.js";
 import type {
   ParsedSkillFrontmatter,
+  SkillEligibilityContext,
+  SkillCommandSpec,
   SkillEntry,
   SkillSnapshot,
 } from "./types.js";
 
 const fsp = fs.promises;
+const skillsLogger = createSubsystemLogger("skills");
+const skillCommandDebugOnce = new Set<string>();
+
+function debugSkillCommandOnce(
+  messageKey: string,
+  message: string,
+  meta?: Record<string, unknown>,
+) {
+  if (skillCommandDebugOnce.has(messageKey)) return;
+  skillCommandDebugOnce.add(messageKey);
+  skillsLogger.debug(message, meta);
+}
 
 function filterSkillEntries(
   entries: SkillEntry[],
   config?: ClawdbotConfig,
   skillFilter?: string[],
+  eligibility?: SkillEligibilityContext,
 ): SkillEntry[] {
-  let filtered = entries.filter((entry) =>
-    shouldIncludeSkill({ entry, config }),
-  );
+  let filtered = entries.filter((entry) => shouldIncludeSkill({ entry, config, eligibility }));
   // If skillFilter is provided, only include skills in the filter list.
   if (skillFilter !== undefined) {
-    const normalized = skillFilter
-      .map((entry) => String(entry).trim())
-      .filter(Boolean);
+    const normalized = skillFilter.map((entry) => String(entry).trim()).filter(Boolean);
     const label = normalized.length > 0 ? normalized.join(", ") : "(none)";
     console.log(`[skills] Applying skill filter: ${label}`);
     filtered =
       normalized.length > 0
         ? filtered.filter((entry) => normalized.includes(entry.skill.name))
         : [];
-    console.log(
-      `[skills] After filter: ${filtered.map((entry) => entry.skill.name).join(", ")}`,
-    );
+    console.log(`[skills] After filter: ${filtered.map((entry) => entry.skill.name).join(", ")}`);
   }
   return filtered;
+}
+
+const SKILL_COMMAND_MAX_LENGTH = 32;
+const SKILL_COMMAND_FALLBACK = "skill";
+// Discord command descriptions must be ≤100 characters
+const SKILL_COMMAND_DESCRIPTION_MAX_LENGTH = 100;
+
+function sanitizeSkillCommandName(raw: string): string {
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  const trimmed = normalized.slice(0, SKILL_COMMAND_MAX_LENGTH);
+  return trimmed || SKILL_COMMAND_FALLBACK;
+}
+
+function resolveUniqueSkillCommandName(base: string, used: Set<string>): string {
+  const normalizedBase = base.toLowerCase();
+  if (!used.has(normalizedBase)) return base;
+  for (let index = 2; index < 1000; index += 1) {
+    const suffix = `_${index}`;
+    const maxBaseLength = Math.max(1, SKILL_COMMAND_MAX_LENGTH - suffix.length);
+    const trimmedBase = base.slice(0, maxBaseLength);
+    const candidate = `${trimmedBase}${suffix}`;
+    const candidateKey = candidate.toLowerCase();
+    if (!used.has(candidateKey)) return candidate;
+  }
+  const fallback = `${base.slice(0, Math.max(1, SKILL_COMMAND_MAX_LENGTH - 2))}_x`;
+  return fallback;
 }
 
 function loadSkillEntries(
@@ -69,8 +113,7 @@ function loadSkillEntries(
     return [];
   };
 
-  const managedSkillsDir =
-    opts?.managedSkillsDir ?? path.join(CONFIG_DIR, "skills");
+  const managedSkillsDir = opts?.managedSkillsDir ?? path.join(CONFIG_DIR, "skills");
   const workspaceSkillsDir = path.join(workspaceDir, "skills");
   const bundledSkillsDir = opts?.bundledSkillsDir ?? resolveBundledSkillsDir();
   const extraDirsRaw = opts?.config?.skills?.load?.extraDirs ?? [];
@@ -107,22 +150,21 @@ function loadSkillEntries(
   for (const skill of managedSkills) merged.set(skill.name, skill);
   for (const skill of workspaceSkills) merged.set(skill.name, skill);
 
-  const skillEntries: SkillEntry[] = Array.from(merged.values()).map(
-    (skill) => {
-      let frontmatter: ParsedSkillFrontmatter = {};
-      try {
-        const raw = fs.readFileSync(skill.filePath, "utf-8");
-        frontmatter = parseFrontmatter(raw);
-      } catch {
-        // ignore malformed skills
-      }
-      return {
-        skill,
-        frontmatter,
-        clawdbot: resolveClawdbotMetadata(frontmatter),
-      };
-    },
-  );
+  const skillEntries: SkillEntry[] = Array.from(merged.values()).map((skill) => {
+    let frontmatter: ParsedSkillFrontmatter = {};
+    try {
+      const raw = fs.readFileSync(skill.filePath, "utf-8");
+      frontmatter = parseFrontmatter(raw);
+    } catch {
+      // ignore malformed skills
+    }
+    return {
+      skill,
+      frontmatter,
+      clawdbot: resolveClawdbotMetadata(frontmatter),
+      invocation: resolveSkillInvocationPolicy(frontmatter),
+    };
+  });
   return skillEntries;
 }
 
@@ -135,6 +177,8 @@ export function buildWorkspaceSkillSnapshot(
     entries?: SkillEntry[];
     /** If provided, only include skills with these names */
     skillFilter?: string[];
+    eligibility?: SkillEligibilityContext;
+    snapshotVersion?: number;
   },
 ): SkillSnapshot {
   const skillEntries = opts?.entries ?? loadSkillEntries(workspaceDir, opts);
@@ -142,15 +186,22 @@ export function buildWorkspaceSkillSnapshot(
     skillEntries,
     opts?.config,
     opts?.skillFilter,
+    opts?.eligibility,
   );
-  const resolvedSkills = eligible.map((entry) => entry.skill);
+  const promptEntries = eligible.filter(
+    (entry) => entry.invocation?.disableModelInvocation !== true,
+  );
+  const resolvedSkills = promptEntries.map((entry) => entry.skill);
+  const remoteNote = opts?.eligibility?.remote?.note?.trim();
+  const prompt = [remoteNote, formatSkillsForPrompt(resolvedSkills)].filter(Boolean).join("\n");
   return {
-    prompt: formatSkillsForPrompt(resolvedSkills),
+    prompt,
     skills: eligible.map((entry) => ({
       name: entry.skill.name,
       primaryEnv: entry.clawdbot?.primaryEnv,
     })),
     resolvedSkills,
+    version: opts?.snapshotVersion,
   };
 }
 
@@ -163,6 +214,7 @@ export function buildWorkspaceSkillsPrompt(
     entries?: SkillEntry[];
     /** If provided, only include skills with these names */
     skillFilter?: string[];
+    eligibility?: SkillEligibilityContext;
   },
 ): string {
   const skillEntries = opts?.entries ?? loadSkillEntries(workspaceDir, opts);
@@ -170,8 +222,15 @@ export function buildWorkspaceSkillsPrompt(
     skillEntries,
     opts?.config,
     opts?.skillFilter,
+    opts?.eligibility,
   );
-  return formatSkillsForPrompt(eligible.map((entry) => entry.skill));
+  const promptEntries = eligible.filter(
+    (entry) => entry.invocation?.disableModelInvocation !== true,
+  );
+  const remoteNote = opts?.eligibility?.remote?.note?.trim();
+  return [remoteNote, formatSkillsForPrompt(promptEntries.map((entry) => entry.skill))]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function resolveSkillsPromptForRun(params: {
@@ -234,11 +293,8 @@ export async function syncSkillsToWorkspace(params: {
           force: true,
         });
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : JSON.stringify(error);
-        console.warn(
-          `[skills] Failed to copy ${entry.skill.name} to sandbox: ${message}`,
-        );
+        const message = error instanceof Error ? error.message : JSON.stringify(error);
+        console.warn(`[skills] Failed to copy ${entry.skill.name} to sandbox: ${message}`);
       }
     }
   });
@@ -249,4 +305,63 @@ export function filterWorkspaceSkillEntries(
   config?: ClawdbotConfig,
 ): SkillEntry[] {
   return filterSkillEntries(entries, config);
+}
+
+export function buildWorkspaceSkillCommandSpecs(
+  workspaceDir: string,
+  opts?: {
+    config?: ClawdbotConfig;
+    managedSkillsDir?: string;
+    bundledSkillsDir?: string;
+    entries?: SkillEntry[];
+    skillFilter?: string[];
+    eligibility?: SkillEligibilityContext;
+    reservedNames?: Set<string>;
+  },
+): SkillCommandSpec[] {
+  const skillEntries = opts?.entries ?? loadSkillEntries(workspaceDir, opts);
+  const eligible = filterSkillEntries(
+    skillEntries,
+    opts?.config,
+    opts?.skillFilter,
+    opts?.eligibility,
+  );
+  const userInvocable = eligible.filter((entry) => entry.invocation?.userInvocable !== false);
+  const used = new Set<string>();
+  for (const reserved of opts?.reservedNames ?? []) {
+    used.add(reserved.toLowerCase());
+  }
+
+  const specs: SkillCommandSpec[] = [];
+  for (const entry of userInvocable) {
+    const rawName = entry.skill.name;
+    const base = sanitizeSkillCommandName(rawName);
+    if (base !== rawName) {
+      debugSkillCommandOnce(
+        `sanitize:${rawName}:${base}`,
+        `Sanitized skill command name "${rawName}" to "/${base}".`,
+        { rawName, sanitized: `/${base}` },
+      );
+    }
+    const unique = resolveUniqueSkillCommandName(base, used);
+    if (unique !== base) {
+      debugSkillCommandOnce(
+        `dedupe:${rawName}:${unique}`,
+        `De-duplicated skill command name for "${rawName}" to "/${unique}".`,
+        { rawName, deduped: `/${unique}` },
+      );
+    }
+    used.add(unique.toLowerCase());
+    const rawDescription = entry.skill.description?.trim() || rawName;
+    const description =
+      rawDescription.length > SKILL_COMMAND_DESCRIPTION_MAX_LENGTH
+        ? rawDescription.slice(0, SKILL_COMMAND_DESCRIPTION_MAX_LENGTH - 1) + "…"
+        : rawDescription;
+    specs.push({
+      name: unique,
+      skillName: rawName,
+      description,
+    });
+  }
+  return specs;
 }

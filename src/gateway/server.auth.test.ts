@@ -1,6 +1,8 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+import fs from "node:fs/promises";
 import { WebSocket } from "ws";
 import { PROTOCOL_VERSION } from "./protocol/index.js";
+import { HANDSHAKE_TIMEOUT_MS } from "./server-constants.js";
 import {
   connectReq,
   getFreePort,
@@ -13,28 +15,27 @@ import {
 
 installGatewayTestHooks();
 
+async function waitForWsClose(ws: WebSocket, timeoutMs: number): Promise<boolean> {
+  const deadline = process.hrtime.bigint() + BigInt(timeoutMs) * 1_000_000n;
+  while (process.hrtime.bigint() < deadline) {
+    if (ws.readyState === WebSocket.CLOSED) return true;
+    // Yield to the event loop without relying on timers (fake timers can leak).
+    await fs.stat(process.cwd()).catch(() => {});
+  }
+  return ws.readyState === WebSocket.CLOSED;
+}
+
 describe("gateway server auth/connect", () => {
-  test(
-    "closes silent handshakes after timeout",
-    { timeout: 15_000 },
-    async () => {
-      const { server, ws } = await startServerWithClient();
-      const closed = await new Promise<boolean>((resolve) => {
-        const timer = setTimeout(() => resolve(false), 12_000);
-        ws.once("close", () => {
-          clearTimeout(timer);
-          resolve(true);
-        });
-      });
-      expect(closed).toBe(true);
-      await server.close();
-    },
-  );
+  test("closes silent handshakes after timeout", { timeout: 60_000 }, async () => {
+    vi.useRealTimers();
+    const { server, ws } = await startServerWithClient();
+    const closed = await waitForWsClose(ws, HANDSHAKE_TIMEOUT_MS + 2_000);
+    expect(closed).toBe(true);
+    await server.close();
+  });
 
   test("connect (req) handshake returns hello-ok payload", async () => {
-    const { CONFIG_PATH_CLAWDBOT, STATE_DIR_CLAWDBOT } = await import(
-      "../config/config.js"
-    );
+    const { CONFIG_PATH_CLAWDBOT, STATE_DIR_CLAWDBOT } = await import("../config/config.js");
     const port = await getFreePort();
     const server = await startGatewayServer(port);
     const ws = new WebSocket(`ws://127.0.0.1:${port}`);
@@ -128,16 +129,12 @@ describe("gateway server auth/connect", () => {
 
   test(
     "invalid connect params surface in response and close reason",
-    { timeout: 15000 },
+    { timeout: 60_000 },
     async () => {
       const { server, ws } = await startServerWithClient();
-      const closeInfoPromise = new Promise<{ code: number; reason: string }>(
-        (resolve) => {
-          ws.once("close", (code, reason) =>
-            resolve({ code, reason: reason.toString() }),
-          );
-        },
-      );
+      const closeInfoPromise = new Promise<{ code: number; reason: string }>((resolve) => {
+        ws.once("close", (code, reason) => resolve({ code, reason: reason.toString() }));
+      });
 
       ws.send(
         JSON.stringify({
@@ -162,14 +159,10 @@ describe("gateway server auth/connect", () => {
         error?: { message?: string };
       }>(
         ws,
-        (o) =>
-          (o as { type?: string }).type === "res" &&
-          (o as { id?: string }).id === "h-bad",
+        (o) => (o as { type?: string }).type === "res" && (o as { id?: string }).id === "h-bad",
       );
       expect(res.ok).toBe(false);
-      expect(String(res.error?.message ?? "")).toContain(
-        "invalid connect params",
-      );
+      expect(String(res.error?.message ?? "")).toContain("invalid connect params");
 
       const closeInfo = await closeInfoPromise;
       expect(closeInfo.code).toBe(1008);

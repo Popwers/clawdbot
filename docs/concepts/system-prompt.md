@@ -18,13 +18,30 @@ The prompt is intentionally compact and uses fixed sections:
 - **Skills** (when available): tells the model how to load skill instructions on demand.
 - **Clawdbot Self-Update**: how to run `config.apply` and `update.run`.
 - **Workspace**: working directory (`agents.defaults.workspace`).
+- **Documentation**: local path to Clawdbot docs (repo or npm package) and when to read them.
 - **Workspace Files (injected)**: indicates bootstrap files are included below.
 - **Sandbox** (when enabled): indicates sandboxed runtime, sandbox paths, and whether elevated exec is available.
-- **Time**: UTC default + the user’s local time (already converted).
+- **Current Date & Time**: user-local time, timezone, and time format.
 - **Reply Tags**: optional reply tag syntax for supported providers.
 - **Heartbeats**: heartbeat prompt and ack behavior.
 - **Runtime**: host, OS, node, model, thinking level (one line).
 - **Reasoning**: current visibility level + /reasoning toggle hint.
+
+## Prompt modes
+
+Clawdbot can render smaller system prompts for sub-agents. The runtime sets a
+`promptMode` for each run (not a user-facing config):
+
+- `full` (default): includes all sections above.
+- `minimal`: used for sub-agents; omits **Skills**, **Memory Recall**, **Clawdbot
+  Self-Update**, **Model Aliases**, **User Identity**, **Reply Tags**,
+  **Messaging**, **Silent Replies**, and **Heartbeats**. Tooling, Workspace,
+  Sandbox, Current Date & Time (when known), Runtime, and injected context stay
+  available.
+- `none`: returns only the base identity line.
+
+When `promptMode=minimal`, extra injected prompts are labeled **Subagent
+Context** instead of **Group Chat Context**.
 
 ## Workspace bootstrap injection
 
@@ -42,14 +59,26 @@ Large files are truncated with a marker. The max per-file size is controlled by
 `agents.defaults.bootstrapMaxChars` (default: 20000). Missing files inject a
 short missing-file marker.
 
+Internal hooks can intercept this step via `agent:bootstrap` to mutate or replace
+the injected bootstrap files (for example swapping `SOUL.md` for an alternate persona).
+
+To inspect how much each injected file contributes (raw vs injected, truncation, plus tool schema overhead), use `/context list` or `/context detail`. See [Context](/concepts/context).
+
 ## Time handling
 
-The Time line is compact and explicit:
+The system prompt includes a dedicated **Current Date & Time** section when user
+time or timezone is known. It is explicit about:
 
-- Assume timestamps are **UTC** unless stated.
-- The listed **user time** is already converted to `agents.defaults.userTimezone` (if set).
+- The user’s **local time** (already converted).
+- The **time zone** used for the conversion.
+- The **time format** (12-hour / 24-hour).
 
-Use `agents.defaults.userTimezone` in `~/.clawdbot/clawdbot.json` to change the user time zone.
+Configure with:
+
+- `agents.defaults.userTimezone`
+- `agents.defaults.timeFormat` (`auto` | `12` | `24`)
+
+See [Date & Time](/date-time) for full behavior details.
 
 ## Skills
 
@@ -70,3 +99,12 @@ Skills section is omitted.
 ```
 
 This keeps the base prompt small while still enabling targeted skill usage.
+
+## Documentation
+
+When available, the system prompt includes a **Documentation** section that points to the
+local Clawdbot docs directory (either `docs/` in the repo workspace or the bundled npm
+package docs) and also notes the public mirror, source repo, community Discord, and
+ClawdHub (https://clawdhub.com) for skills discovery. The prompt instructs the model to consult local docs first
+for Clawdbot behavior, commands, configuration, or architecture, and to run
+`clawdbot status` itself when possible (asking the user only when it lacks access).

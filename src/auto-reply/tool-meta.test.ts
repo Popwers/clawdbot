@@ -1,11 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  formatToolAggregate,
-  formatToolPrefix,
-  shortenMeta,
-  shortenPath,
-} from "./tool-meta.js";
+import { formatToolAggregate, formatToolPrefix, shortenMeta, shortenPath } from "./tool-meta.js";
 
 describe("tool meta formatting", () => {
   beforeEach(() => {
@@ -39,6 +34,20 @@ describe("tool meta formatting", () => {
     expect(out).toContain("~/dir/{a.txt, b.txt}");
     expect(out).toContain("note");
     expect(out).toContain("a→b");
+  });
+
+  it("wraps aggregate meta in backticks when markdown is enabled", () => {
+    vi.stubEnv("HOME", "/Users/test");
+    const out = formatToolAggregate("fs", ["/Users/test/dir/a.txt"], { markdown: true });
+    expect(out).toContain("`~/dir/a.txt`");
+  });
+
+  it("keeps exec flags outside markdown and moves them to the front", () => {
+    vi.stubEnv("HOME", "/Users/test");
+    const out = formatToolAggregate("exec", ["cd /Users/test/dir && gemini 2>&1 · elevated"], {
+      markdown: true,
+    });
+    expect(out).toBe("🛠️ exec: elevated · `cd ~/dir && gemini 2>&1`");
   });
 
   it("formats prefixes with default labels", () => {

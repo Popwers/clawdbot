@@ -2,20 +2,10 @@ import type { SkillSnapshot } from "../../../agents/skills.js";
 import type { ClawdbotConfig } from "../../../config/config.js";
 import type { SessionEntry } from "../../../config/sessions.js";
 import type { OriginatingChannelType } from "../../templating.js";
-import type {
-  ElevatedLevel,
-  ReasoningLevel,
-  ThinkLevel,
-  VerboseLevel,
-} from "../directives.js";
+import type { ElevatedLevel, ReasoningLevel, ThinkLevel, VerboseLevel } from "../directives.js";
+import type { ExecToolDefaults } from "../../../agents/bash-tools.js";
 
-export type QueueMode =
-  | "steer"
-  | "followup"
-  | "collect"
-  | "steer-backlog"
-  | "interrupt"
-  | "queue";
+export type QueueMode = "steer" | "followup" | "collect" | "steer-backlog" | "interrupt" | "queue";
 
 export type QueueDropPolicy = "old" | "new" | "summarize";
 
@@ -47,8 +37,8 @@ export type FollowupRun = {
   originatingTo?: string;
   /** Provider account id (multi-account). */
   originatingAccountId?: string;
-  /** Telegram forum topic thread id. */
-  originatingThreadId?: number;
+  /** Thread id for reply routing (Telegram topic id or Matrix thread event id). */
+  originatingThreadId?: string | number;
   run: {
     agentId: string;
     agentDir: string;
@@ -63,10 +53,12 @@ export type FollowupRun = {
     provider: string;
     model: string;
     authProfileId?: string;
+    authProfileIdSource?: "auto" | "user";
     thinkLevel?: ThinkLevel;
     verboseLevel?: VerboseLevel;
     reasoningLevel?: ReasoningLevel;
     elevatedLevel?: ElevatedLevel;
+    execOverrides?: Pick<ExecToolDefaults, "host" | "security" | "ask" | "node">;
     bashElevated?: {
       enabled: boolean;
       allowed: boolean;

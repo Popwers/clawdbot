@@ -1,6 +1,7 @@
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
 
 import { emitAgentEvent } from "../infra/agent-events.js";
+import { createInlineCodeState } from "../markdown/code-spans.js";
 import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
 
 export function handleAgentStart(ctx: EmbeddedPiSubscribeContext) {
@@ -13,7 +14,7 @@ export function handleAgentStart(ctx: EmbeddedPiSubscribeContext) {
       startedAt: Date.now(),
     },
   });
-  ctx.params.onAgentEvent?.({
+  void ctx.params.onAgentEvent?.({
     stream: "lifecycle",
     data: { phase: "start" },
   });
@@ -23,7 +24,7 @@ export function handleAutoCompactionStart(ctx: EmbeddedPiSubscribeContext) {
   ctx.state.compactionInFlight = true;
   ctx.ensureCompactionPromise();
   ctx.log.debug(`embedded run compaction start: runId=${ctx.params.runId}`);
-  ctx.params.onAgentEvent?.({
+  void ctx.params.onAgentEvent?.({
     stream: "compaction",
     data: { phase: "start" },
   });
@@ -42,7 +43,7 @@ export function handleAutoCompactionEnd(
   } else {
     ctx.maybeResolveCompactionWait();
   }
-  ctx.params.onAgentEvent?.({
+  void ctx.params.onAgentEvent?.({
     stream: "compaction",
     data: { phase: "end", willRetry },
   });
@@ -58,7 +59,7 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext) {
       endedAt: Date.now(),
     },
   });
-  ctx.params.onAgentEvent?.({
+  void ctx.params.onAgentEvent?.({
     stream: "lifecycle",
     data: { phase: "end" },
   });
@@ -75,6 +76,7 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext) {
 
   ctx.state.blockState.thinking = false;
   ctx.state.blockState.final = false;
+  ctx.state.blockState.inlineCode = createInlineCodeState();
 
   if (ctx.state.pendingCompactionRetry > 0) {
     ctx.resolveCompactionRetry();

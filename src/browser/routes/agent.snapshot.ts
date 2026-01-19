@@ -4,7 +4,11 @@ import type express from "express";
 
 import { ensureMediaDir, saveMediaBuffer } from "../../media/store.js";
 import { captureScreenshot, snapshotAria } from "../cdp.js";
-import { DEFAULT_AI_SNAPSHOT_MAX_CHARS } from "../constants.js";
+import {
+  DEFAULT_AI_SNAPSHOT_EFFICIENT_DEPTH,
+  DEFAULT_AI_SNAPSHOT_EFFICIENT_MAX_CHARS,
+  DEFAULT_AI_SNAPSHOT_MAX_CHARS,
+} from "../constants.js";
 import {
   DEFAULT_BROWSER_SCREENSHOT_MAX_BYTES,
   DEFAULT_BROWSER_SCREENSHOT_MAX_SIDE,
@@ -20,10 +24,7 @@ import {
 } from "./agent.shared.js";
 import { jsonError, toBoolean, toNumber, toStringOrEmpty } from "./utils.js";
 
-export function registerBrowserAgentSnapshotRoutes(
-  app: express.Express,
-  ctx: BrowserRouteContext,
-) {
+export function registerBrowserAgentSnapshotRoutes(app: express.Express, ctx: BrowserRouteContext) {
   app.post("/navigate", async (req, res) => {
     const profileCtx = resolveProfileContext(req, res, ctx);
     if (!profileCtx) return;
@@ -88,18 +89,16 @@ export function registerBrowserAgentSnapshotRoutes(
     const type = body.type === "jpeg" ? "jpeg" : "png";
 
     if (fullPage && (ref || element)) {
-      return jsonError(
-        res,
-        400,
-        "fullPage is not supported for element screenshots",
-      );
+      return jsonError(res, 400, "fullPage is not supported for element screenshots");
     }
 
     try {
       const tab = await profileCtx.ensureTabAvailable(targetId);
       let buffer: Buffer;
-      if (ref || element) {
-        const pw = await requirePwAi(res, "element/ref screenshot");
+      const shouldUsePlaywright =
+        profileCtx.profile.driver === "extension" || !tab.wsUrl || Boolean(ref) || Boolean(element);
+      if (shouldUsePlaywright) {
+        const pw = await requirePwAi(res, "screenshot");
         if (!pw) return;
         const snap = await pw.takeScreenshotViaPlaywright({
           cdpUrl: profileCtx.profile.cdpUrl,
@@ -144,48 +143,52 @@ export function registerBrowserAgentSnapshotRoutes(
   app.get("/snapshot", async (req, res) => {
     const profileCtx = resolveProfileContext(req, res, ctx);
     if (!profileCtx) return;
-    const targetId =
-      typeof req.query.targetId === "string" ? req.query.targetId.trim() : "";
-    const format =
-      req.query.format === "aria"
-        ? "aria"
-        : req.query.format === "ai"
-          ? "ai"
-          : (await getPwAiModule())
-            ? "ai"
-            : "aria";
-    const limitRaw =
-      typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+    const targetId = typeof req.query.targetId === "string" ? req.query.targetId.trim() : "";
+    const mode = req.query.mode === "efficient" ? "efficient" : undefined;
+    const labels = toBoolean(req.query.labels) ?? undefined;
+    const explicitFormat =
+      req.query.format === "aria" ? "aria" : req.query.format === "ai" ? "ai" : undefined;
+    const format = explicitFormat ?? (mode ? "ai" : (await getPwAiModule()) ? "ai" : "aria");
+    const limitRaw = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
     const hasMaxChars = Object.hasOwn(req.query, "maxChars");
     const maxCharsRaw =
-      typeof req.query.maxChars === "string"
-        ? Number(req.query.maxChars)
-        : undefined;
+      typeof req.query.maxChars === "string" ? Number(req.query.maxChars) : undefined;
     const limit = Number.isFinite(limitRaw) ? limitRaw : undefined;
     const maxChars =
-      typeof maxCharsRaw === "number" &&
-      Number.isFinite(maxCharsRaw) &&
-      maxCharsRaw > 0
+      typeof maxCharsRaw === "number" && Number.isFinite(maxCharsRaw) && maxCharsRaw > 0
         ? Math.floor(maxCharsRaw)
         : undefined;
     const resolvedMaxChars =
       format === "ai"
         ? hasMaxChars
           ? maxChars
-          : DEFAULT_AI_SNAPSHOT_MAX_CHARS
+          : mode === "efficient"
+            ? DEFAULT_AI_SNAPSHOT_EFFICIENT_MAX_CHARS
+            : DEFAULT_AI_SNAPSHOT_MAX_CHARS
         : undefined;
-    const interactive = toBoolean(req.query.interactive);
-    const compact = toBoolean(req.query.compact);
-    const depth = toNumber(req.query.depth);
+    const interactiveRaw = toBoolean(req.query.interactive);
+    const compactRaw = toBoolean(req.query.compact);
+    const depthRaw = toNumber(req.query.depth);
+    const refsModeRaw = toStringOrEmpty(req.query.refs).trim();
+    const refsMode = refsModeRaw === "aria" ? "aria" : refsModeRaw === "role" ? "role" : undefined;
+    const interactive = interactiveRaw ?? (mode === "efficient" ? true : undefined);
+    const compact = compactRaw ?? (mode === "efficient" ? true : undefined);
+    const depth =
+      depthRaw ?? (mode === "efficient" ? DEFAULT_AI_SNAPSHOT_EFFICIENT_DEPTH : undefined);
     const selector = toStringOrEmpty(req.query.selector);
     const frameSelector = toStringOrEmpty(req.query.frame);
 
     try {
       const tab = await profileCtx.ensureTabAvailable(targetId || undefined);
+      if ((labels || mode === "efficient") && format === "aria") {
+        return jsonError(res, 400, "labels/mode=efficient require format=ai");
+      }
       if (format === "ai") {
         const pw = await requirePwAi(res, "ai snapshot");
         if (!pw) return;
         const wantsRoleSnapshot =
+          labels === true ||
+          mode === "efficient" ||
           interactive === true ||
           compact === true ||
           depth !== undefined ||
@@ -198,6 +201,7 @@ export function registerBrowserAgentSnapshotRoutes(
               targetId: tab.targetId,
               selector: selector.trim() || undefined,
               frameSelector: frameSelector.trim() || undefined,
+              refsMode,
               options: {
                 interactive: interactive ?? undefined,
                 compact: compact ?? undefined,
@@ -208,9 +212,7 @@ export function registerBrowserAgentSnapshotRoutes(
               .snapshotAiViaPlaywright({
                 cdpUrl: profileCtx.profile.cdpUrl,
                 targetId: tab.targetId,
-                ...(typeof resolvedMaxChars === "number"
-                  ? { maxChars: resolvedMaxChars }
-                  : {}),
+                ...(typeof resolvedMaxChars === "number" ? { maxChars: resolvedMaxChars } : {}),
               })
               .catch(async (err) => {
                 // Public-API fallback when Playwright's private _snapshotForAI is missing.
@@ -220,6 +222,7 @@ export function registerBrowserAgentSnapshotRoutes(
                     targetId: tab.targetId,
                     selector: selector.trim() || undefined,
                     frameSelector: frameSelector.trim() || undefined,
+                    refsMode,
                     options: {
                       interactive: interactive ?? undefined,
                       compact: compact ?? undefined,
@@ -229,6 +232,39 @@ export function registerBrowserAgentSnapshotRoutes(
                 }
                 throw err;
               });
+        if (labels) {
+          const labeled = await pw.screenshotWithLabelsViaPlaywright({
+            cdpUrl: profileCtx.profile.cdpUrl,
+            targetId: tab.targetId,
+            refs: "refs" in snap ? snap.refs : {},
+            type: "png",
+          });
+          const normalized = await normalizeBrowserScreenshot(labeled.buffer, {
+            maxSide: DEFAULT_BROWSER_SCREENSHOT_MAX_SIDE,
+            maxBytes: DEFAULT_BROWSER_SCREENSHOT_MAX_BYTES,
+          });
+          await ensureMediaDir();
+          const saved = await saveMediaBuffer(
+            normalized.buffer,
+            normalized.contentType ?? "image/png",
+            "browser",
+            DEFAULT_BROWSER_SCREENSHOT_MAX_BYTES,
+          );
+          const imageType = normalized.contentType?.includes("jpeg") ? "jpeg" : "png";
+          return res.json({
+            ok: true,
+            format,
+            targetId: tab.targetId,
+            url: tab.url,
+            labels: true,
+            labelsCount: labeled.labels,
+            labelsSkipped: labeled.skipped,
+            imagePath: path.resolve(saved.path),
+            imageType,
+            ...snap,
+          });
+        }
+
         return res.json({
           ok: true,
           format,
@@ -238,16 +274,30 @@ export function registerBrowserAgentSnapshotRoutes(
         });
       }
 
-      const snap = await snapshotAria({
-        wsUrl: tab.wsUrl ?? "",
-        limit,
-      });
+      const snap =
+        profileCtx.profile.driver === "extension" || !tab.wsUrl
+          ? (() => {
+              // Extension relay doesn't expose per-page WS URLs; run AX snapshot via Playwright CDP session.
+              // Also covers cases where wsUrl is missing/unusable.
+              return requirePwAi(res, "aria snapshot").then(async (pw) => {
+                if (!pw) return null;
+                return await pw.snapshotAriaViaPlaywright({
+                  cdpUrl: profileCtx.profile.cdpUrl,
+                  targetId: tab.targetId,
+                  limit,
+                });
+              });
+            })()
+          : snapshotAria({ wsUrl: tab.wsUrl ?? "", limit });
+
+      const resolved = await Promise.resolve(snap);
+      if (!resolved) return;
       return res.json({
         ok: true,
         format,
         targetId: tab.targetId,
         url: tab.url,
-        ...snap,
+        ...resolved,
       });
     } catch (err) {
       handleRouteError(ctx, res, err);

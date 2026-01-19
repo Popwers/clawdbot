@@ -2,6 +2,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildMinimalServicePath,
+  buildNodeServiceEnvironment,
   buildServiceEnvironment,
 } from "./service-env.js";
 
@@ -51,6 +52,7 @@ describe("buildServiceEnvironment", () => {
       port: 18789,
       token: "secret",
     });
+    expect(env.HOME).toBe("/home/user");
     if (process.platform === "win32") {
       expect(env.PATH).toBe("");
     } else {
@@ -76,5 +78,14 @@ describe("buildServiceEnvironment", () => {
     if (process.platform === "darwin") {
       expect(env.CLAWDBOT_LAUNCHD_LABEL).toBe("com.clawdbot.work");
     }
+  });
+});
+
+describe("buildNodeServiceEnvironment", () => {
+  it("passes through HOME for node services", () => {
+    const env = buildNodeServiceEnvironment({
+      env: { HOME: "/home/user" },
+    });
+    expect(env.HOME).toBe("/home/user");
   });
 });

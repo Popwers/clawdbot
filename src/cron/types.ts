@@ -27,6 +27,14 @@ export type CronPayload =
 
 export type CronIsolation = {
   postToMainPrefix?: string;
+  /**
+   * What to post back into the main session after an isolated run.
+   * - summary: small status/summary line (default)
+   * - full: the agent's final text output (optionally truncated)
+   */
+  postToMainMode?: "summary" | "full";
+  /** Max chars when postToMainMode="full". Default: 8000. */
+  postToMainMaxChars?: number;
 };
 
 export type CronJobState = {
@@ -60,10 +68,7 @@ export type CronStoreFile = {
   jobs: CronJob[];
 };
 
-export type CronJobCreate = Omit<
-  CronJob,
-  "id" | "createdAtMs" | "updatedAtMs" | "state"
-> & {
+export type CronJobCreate = Omit<CronJob, "id" | "createdAtMs" | "updatedAtMs" | "state"> & {
   state?: Partial<CronJobState>;
 };
 

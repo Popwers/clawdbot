@@ -35,23 +35,37 @@ export type InboundPolicy = z.infer<typeof InboundPolicySchema>;
 // Provider-Specific Configuration
 // -----------------------------------------------------------------------------
 
-export const TelnyxConfigSchema = z.object({
+export const TelnyxConfigSchema = z
+  .object({
   /** Telnyx API v2 key */
   apiKey: z.string().min(1).optional(),
   /** Telnyx connection ID (from Call Control app) */
   connectionId: z.string().min(1).optional(),
   /** Public key for webhook signature verification */
   publicKey: z.string().min(1).optional(),
-});
+})
+  .strict();
 export type TelnyxConfig = z.infer<typeof TelnyxConfigSchema>;
 
-export const TwilioConfigSchema = z.object({
+export const TwilioConfigSchema = z
+  .object({
   /** Twilio Account SID */
   accountSid: z.string().min(1).optional(),
   /** Twilio Auth Token */
   authToken: z.string().min(1).optional(),
-});
+})
+  .strict();
 export type TwilioConfig = z.infer<typeof TwilioConfigSchema>;
+
+export const PlivoConfigSchema = z
+  .object({
+  /** Plivo Auth ID (starts with MA/SA) */
+  authId: z.string().min(1).optional(),
+  /** Plivo Auth Token */
+  authToken: z.string().min(1).optional(),
+})
+  .strict();
+export type PlivoConfig = z.infer<typeof PlivoConfigSchema>;
 
 // -----------------------------------------------------------------------------
 // STT/TTS Configuration
@@ -64,6 +78,7 @@ export const SttConfigSchema = z
     /** Whisper model to use */
     model: z.string().min(1).default("whisper-1"),
   })
+  .strict()
   .default({ provider: "openai", model: "whisper-1" });
 export type SttConfig = z.infer<typeof SttConfigSchema>;
 
@@ -89,6 +104,7 @@ export const TtsConfigSchema = z
      */
     instructions: z.string().optional(),
   })
+  .strict()
   .default({ provider: "openai", model: "gpt-4o-mini-tts", voice: "coral" });
 export type TtsConfig = z.infer<typeof TtsConfigSchema>;
 
@@ -105,6 +121,7 @@ export const VoiceCallServeConfigSchema = z
     /** Webhook path */
     path: z.string().min(1).default("/voice/webhook"),
   })
+  .strict()
   .default({ port: 3334, bind: "127.0.0.1", path: "/voice/webhook" });
 export type VoiceCallServeConfig = z.infer<typeof VoiceCallServeConfigSchema>;
 
@@ -120,6 +137,7 @@ export const VoiceCallTailscaleConfigSchema = z
     /** Path for Tailscale serve/funnel (should usually match serve.path) */
     path: z.string().min(1).default("/voice/webhook"),
   })
+  .strict()
   .default({ mode: "off", path: "/voice/webhook" });
 export type VoiceCallTailscaleConfig = z.infer<
   typeof VoiceCallTailscaleConfigSchema
@@ -153,6 +171,7 @@ export const VoiceCallTunnelConfigSchema = z
      */
     allowNgrokFreeTier: z.boolean().default(true),
   })
+  .strict()
   .default({ provider: "none", allowNgrokFreeTier: true });
 export type VoiceCallTunnelConfig = z.infer<typeof VoiceCallTunnelConfigSchema>;
 
@@ -175,6 +194,7 @@ export const OutboundConfigSchema = z
     /** Seconds to wait after TTS before auto-hangup in notify mode */
     notifyHangupDelaySec: z.number().int().nonnegative().default(3),
   })
+  .strict()
   .default({ defaultMode: "notify", notifyHangupDelaySec: 3 });
 export type OutboundConfig = z.infer<typeof OutboundConfigSchema>;
 
@@ -199,6 +219,7 @@ export const VoiceCallStreamingConfigSchema = z
     /** WebSocket path for media stream connections */
     streamPath: z.string().min(1).default("/voice/stream"),
   })
+  .strict()
   .default({
     enabled: false,
     sttProvider: "openai-realtime",
@@ -215,18 +236,22 @@ export type VoiceCallStreamingConfig = z.infer<
 // Main Voice Call Configuration
 // -----------------------------------------------------------------------------
 
-export const VoiceCallConfigSchema = z.object({
+export const VoiceCallConfigSchema = z
+  .object({
   /** Enable voice call functionality */
   enabled: z.boolean().default(false),
 
-  /** Active provider (telnyx, twilio, or mock) */
-  provider: z.enum(["telnyx", "twilio", "mock"]).optional(),
+  /** Active provider (telnyx, twilio, plivo, or mock) */
+  provider: z.enum(["telnyx", "twilio", "plivo", "mock"]).optional(),
 
   /** Telnyx-specific configuration */
   telnyx: TelnyxConfigSchema.optional(),
 
   /** Twilio-specific configuration */
   twilio: TwilioConfigSchema.optional(),
+
+  /** Plivo-specific configuration */
+  plivo: PlivoConfigSchema.optional(),
 
   /** Phone number to call from (E.164) */
   fromNumber: E164Schema.optional(),
@@ -296,7 +321,8 @@ export const VoiceCallConfigSchema = z.object({
 
   /** Timeout for response generation in ms (default 30s) */
   responseTimeoutMs: z.number().int().positive().default(30000),
-});
+})
+  .strict();
 
 export type VoiceCallConfig = z.infer<typeof VoiceCallConfigSchema>;
 
@@ -347,6 +373,19 @@ export function validateProviderConfig(config: VoiceCallConfig): {
     if (!config.twilio?.authToken) {
       errors.push(
         "plugins.entries.voice-call.config.twilio.authToken is required (or set TWILIO_AUTH_TOKEN env)",
+      );
+    }
+  }
+
+  if (config.provider === "plivo") {
+    if (!config.plivo?.authId) {
+      errors.push(
+        "plugins.entries.voice-call.config.plivo.authId is required (or set PLIVO_AUTH_ID env)",
+      );
+    }
+    if (!config.plivo?.authToken) {
+      errors.push(
+        "plugins.entries.voice-call.config.plivo.authToken is required (or set PLIVO_AUTH_TOKEN env)",
       );
     }
   }

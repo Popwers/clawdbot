@@ -44,18 +44,18 @@ file creation:
 { agent: { skipBootstrap: true } }
 ```
 
-## Legacy workspace folders
+## Extra workspace folders
 
-Older installs may have created `~/clawdis` or `~/clawdbot`. Keeping multiple
-workspace directories around can cause confusing auth or state drift, because
-only one workspace is active at a time.
+Older installs may have created `~/clawdbot`. Keeping multiple workspace
+directories around can cause confusing auth or state drift, because only one
+workspace is active at a time.
 
 **Recommendation:** keep a single active workspace. If you no longer use the
-legacy folders, archive or move them to Trash (for example `trash ~/clawdis`).
+extra folders, archive or move them to Trash (for example `trash ~/clawdbot`).
 If you intentionally keep multiple workspaces, make sure
 `agents.defaults.workspace` points to the active one.
 
-`clawdbot doctor` warns when it detects legacy workspace directories.
+`clawdbot doctor` warns when it detects extra workspace directories.
 
 ## Workspace file map (what each file means)
 
@@ -85,6 +85,10 @@ These are the standard files Clawdbot expects inside the workspace:
 - `HEARTBEAT.md`
   - Optional tiny checklist for heartbeat runs.
   - Keep it short to avoid token burn.
+
+- `BOOT.md`
+  - Optional startup checklist executed on gateway restart when internal hooks are enabled.
+  - Keep it short; use the message tool for outbound sends.
 
 - `BOOTSTRAP.md`
   - One-time first-run ritual.

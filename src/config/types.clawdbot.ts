@@ -4,13 +4,7 @@ import type { LoggingConfig, SessionConfig, WebConfig } from "./types.base.js";
 import type { BrowserConfig } from "./types.browser.js";
 import type { ChannelsConfig } from "./types.channels.js";
 import type { CronConfig } from "./types.cron.js";
-import type {
-  BridgeConfig,
-  CanvasHostConfig,
-  DiscoveryConfig,
-  GatewayConfig,
-  TalkConfig,
-} from "./types.gateway.js";
+import type { CanvasHostConfig, DiscoveryConfig, GatewayConfig, TalkConfig } from "./types.gateway.js";
 import type { HooksConfig } from "./types.hooks.js";
 import type {
   AudioConfig,
@@ -24,6 +18,12 @@ import type { SkillsConfig } from "./types.skills.js";
 import type { ToolsConfig } from "./types.tools.js";
 
 export type ClawdbotConfig = {
+  meta?: {
+    /** Last clawdbot version that wrote this config. */
+    lastTouchedVersion?: string;
+    /** ISO timestamp when this config was last written. */
+    lastTouchedAt?: string;
+  };
   auth?: AuthConfig;
   env?: {
     /** Opt-in: import missing secrets from a login shell environment (exec `$SHELL -l -c 'env -0'`). */
@@ -49,6 +49,12 @@ export type ClawdbotConfig = {
     lastRunMode?: "local" | "remote";
   };
   logging?: LoggingConfig;
+  update?: {
+    /** Update channel for npm installs ("stable" or "beta"). */
+    channel?: "stable" | "beta";
+    /** Check for updates on gateway start (npm installs only). */
+    checkOnStart?: boolean;
+  };
   browser?: BrowserConfig;
   ui?: {
     /** Accent color for Clawdbot UI chrome (hex). */
@@ -69,7 +75,6 @@ export type ClawdbotConfig = {
   channels?: ChannelsConfig;
   cron?: CronConfig;
   hooks?: HooksConfig;
-  bridge?: BridgeConfig;
   discovery?: DiscoveryConfig;
   canvasHost?: CanvasHostConfig;
   talk?: TalkConfig;
@@ -93,6 +98,7 @@ export type ConfigFileSnapshot = {
   parsed: unknown;
   valid: boolean;
   config: ClawdbotConfig;
+  hash?: string;
   issues: ConfigValidationIssue[];
   legacyIssues: LegacyConfigIssue[];
 };

@@ -19,10 +19,8 @@ vi.mock("../auto-reply/reply/dispatch-from-config.js", () => ({
   dispatchReplyFromConfig: (...args: unknown[]) => dispatchMock(...args),
 }));
 vi.mock("../pairing/pairing-store.js", () => ({
-  readChannelAllowFromStore: (...args: unknown[]) =>
-    readAllowFromStoreMock(...args),
-  upsertChannelPairingRequest: (...args: unknown[]) =>
-    upsertPairingRequestMock(...args),
+  readChannelAllowFromStore: (...args: unknown[]) => readAllowFromStoreMock(...args),
+  upsertChannelPairingRequest: (...args: unknown[]) => upsertPairingRequestMock(...args),
 }));
 vi.mock("../config/sessions.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/sessions.js")>();
@@ -42,9 +40,7 @@ beforeEach(() => {
     return { queuedFinal: true, counts: { final: 1 } };
   });
   readAllowFromStoreMock.mockReset().mockResolvedValue([]);
-  upsertPairingRequestMock
-    .mockReset()
-    .mockResolvedValue({ code: "PAIRCODE", created: true });
+  upsertPairingRequestMock.mockReset().mockResolvedValue({ code: "PAIRCODE", created: true });
   vi.resetModules();
 });
 
@@ -373,6 +369,97 @@ describe("discord tool result dispatch", () => {
     expect(capturedCtx?.SessionKey).toBe("agent:main:discord:channel:c1");
   });
 
+  it("prefixes group bodies with sender label", async () => {
+    const { createDiscordMessageHandler } = await import("./monitor.js");
+    let capturedBody = "";
+    dispatchMock.mockImplementationOnce(async ({ ctx, dispatcher }) => {
+      capturedBody = ctx.Body ?? "";
+      dispatcher.sendFinalReply({ text: "ok" });
+      return { queuedFinal: true, counts: { final: 1 } };
+    });
+
+    const cfg = {
+      agents: {
+        defaults: {
+          model: "anthropic/claude-opus-4-5",
+          workspace: "/tmp/clawd",
+        },
+      },
+      session: { store: "/tmp/clawdbot-sessions.json" },
+      channels: {
+        discord: {
+          dm: { enabled: true, policy: "open" },
+          guilds: {
+            "*": {
+              requireMention: false,
+              channels: { c1: { allow: true } },
+            },
+          },
+        },
+      },
+      routing: { allowFrom: [] },
+    } as ReturnType<typeof import("../config/config.js").loadConfig>;
+
+    const handler = createDiscordMessageHandler({
+      cfg,
+      discordConfig: cfg.channels.discord,
+      accountId: "default",
+      token: "token",
+      runtime: {
+        log: vi.fn(),
+        error: vi.fn(),
+        exit: (code: number): never => {
+          throw new Error(`exit ${code}`);
+        },
+      },
+      botUserId: "bot-id",
+      guildHistories: new Map(),
+      historyLimit: 0,
+      mediaMaxBytes: 10_000,
+      textLimit: 2000,
+      replyToMode: "off",
+      dmEnabled: true,
+      groupDmEnabled: false,
+      guildEntries: {
+        "*": { requireMention: false, channels: { c1: { allow: true } } },
+      },
+    });
+
+    const client = {
+      fetchChannel: vi.fn().mockResolvedValue({
+        type: ChannelType.GuildText,
+        name: "general",
+        parentId: "category-1",
+      }),
+      rest: { get: vi.fn() },
+    } as unknown as Client;
+
+    await handler(
+      {
+        message: {
+          id: "m-prefix",
+          content: "hello",
+          channelId: "c1",
+          timestamp: new Date("2026-01-17T00:00:00Z").toISOString(),
+          type: MessageType.Default,
+          attachments: [],
+          embeds: [],
+          mentionedEveryone: false,
+          mentionedUsers: [],
+          mentionedRoles: [],
+          author: { id: "u1", bot: false, username: "Ada", discriminator: "1234" },
+        },
+        author: { id: "u1", bot: false, username: "Ada", discriminator: "1234" },
+        member: { displayName: "Ada" },
+        guild: { id: "g1", name: "Guild" },
+        guild_id: "g1",
+      },
+      client,
+    );
+
+    expect(capturedBody).toContain("Ada (Ada#1234): hello");
+  });
+
   it("replies with pairing code and sender id when dmPolicy is pairing", async () => {
     const { createDiscordMessageHandler } = await import("./monitor.js");
     const cfg = {
@@ -441,11 +528,7 @@ describe("discord tool result dispatch", () => {
     expect(dispatchMock).not.toHaveBeenCalled();
     expect(upsertPairingRequestMock).toHaveBeenCalled();
     expect(sendMock).toHaveBeenCalledTimes(1);
-    expect(String(sendMock.mock.calls[0]?.[1] ?? "")).toContain(
-      "Your Discord user id: u2",
-    );
-    expect(String(sendMock.mock.calls[0]?.[1] ?? "")).toContain(
-      "Pairing code: PAIRCODE",
-    );
+    expect(String(sendMock.mock.calls[0]?.[1] ?? "")).toContain("Your Discord user id: u2");
+    expect(String(sendMock.mock.calls[0]?.[1] ?? "")).toContain("Pairing code: PAIRCODE");
   }, 10000);
 });

@@ -44,9 +44,7 @@ export const CronPayloadSchema = Type.Union([
       thinking: Type.Optional(Type.String()),
       timeoutSeconds: Type.Optional(Type.Integer({ minimum: 1 })),
       deliver: Type.Optional(Type.Boolean()),
-      channel: Type.Optional(
-        Type.Union([Type.Literal("last"), NonEmptyString]),
-      ),
+      channel: Type.Optional(Type.Union([Type.Literal("last"), NonEmptyString])),
       to: Type.Optional(Type.String()),
       bestEffortDeliver: Type.Optional(Type.Boolean()),
     },
@@ -57,6 +55,8 @@ export const CronPayloadSchema = Type.Union([
 export const CronIsolationSchema = Type.Object(
   {
     postToMainPrefix: Type.Optional(Type.String()),
+    postToMainMode: Type.Optional(Type.Union([Type.Literal("summary"), Type.Literal("full")])),
+    postToMainMaxChars: Type.Optional(Type.Integer({ minimum: 0 })),
   },
   { additionalProperties: false },
 );
@@ -67,11 +67,7 @@ export const CronJobStateSchema = Type.Object(
     runningAtMs: Type.Optional(Type.Integer({ minimum: 0 })),
     lastRunAtMs: Type.Optional(Type.Integer({ minimum: 0 })),
     lastStatus: Type.Optional(
-      Type.Union([
-        Type.Literal("ok"),
-        Type.Literal("error"),
-        Type.Literal("skipped"),
-      ]),
+      Type.Union([Type.Literal("ok"), Type.Literal("error"), Type.Literal("skipped")]),
     ),
     lastError: Type.Optional(Type.String()),
     lastDurationMs: Type.Optional(Type.Integer({ minimum: 0 })),
@@ -106,10 +102,7 @@ export const CronListParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const CronStatusParamsSchema = Type.Object(
-  {},
-  { additionalProperties: false },
-);
+export const CronStatusParamsSchema = Type.Object({}, { additionalProperties: false });
 
 export const CronAddParamsSchema = Type.Object(
   {
@@ -163,18 +156,14 @@ export const CronRunParamsSchema = Type.Union([
   Type.Object(
     {
       id: NonEmptyString,
-      mode: Type.Optional(
-        Type.Union([Type.Literal("due"), Type.Literal("force")]),
-      ),
+      mode: Type.Optional(Type.Union([Type.Literal("due"), Type.Literal("force")])),
     },
     { additionalProperties: false },
   ),
   Type.Object(
     {
       jobId: NonEmptyString,
-      mode: Type.Optional(
-        Type.Union([Type.Literal("due"), Type.Literal("force")]),
-      ),
+      mode: Type.Optional(Type.Union([Type.Literal("due"), Type.Literal("force")])),
     },
     { additionalProperties: false },
   ),
@@ -203,11 +192,7 @@ export const CronRunLogEntrySchema = Type.Object(
     jobId: NonEmptyString,
     action: Type.Literal("finished"),
     status: Type.Optional(
-      Type.Union([
-        Type.Literal("ok"),
-        Type.Literal("error"),
-        Type.Literal("skipped"),
-      ]),
+      Type.Union([Type.Literal("ok"), Type.Literal("error"), Type.Literal("skipped")]),
     ),
     error: Type.Optional(Type.String()),
     summary: Type.Optional(Type.String()),

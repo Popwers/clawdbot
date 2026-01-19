@@ -10,18 +10,13 @@ vi.mock("../agents/pi-embedded.js", () => ({
   isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),
   runEmbeddedPiAgent: vi.fn(),
   queueEmbeddedPiMessage: vi.fn().mockReturnValue(false),
-  resolveEmbeddedSessionLane: (key: string) =>
-    `session:${key.trim() || "main"}`,
+  resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
 }));
 
 import { resetInboundDedupe } from "../auto-reply/reply/inbound-dedupe.js";
 import { resetLogger, setLoggerOverride } from "../logging.js";
 import { monitorWebChannel } from "./auto-reply.js";
-import {
-  resetBaileysMocks,
-  resetLoadConfigMock,
-  setLoadConfigMock,
-} from "./test-helpers.js";
+import { resetBaileysMocks, resetLoadConfigMock, setLoadConfigMock } from "./test-helpers.js";
 
 let previousHome: string | undefined;
 let tempHome: string | undefined;
@@ -120,9 +115,7 @@ describe("web auto-reply", () => {
       | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
       | undefined;
     const listenerFactory = async (opts: {
-      onMessage: (
-        msg: import("./inbound.js").WebInboundMessage,
-      ) => Promise<void>;
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
     }) => {
       capturedOnMessage = opts.onMessage;
       return { close: vi.fn() };
@@ -173,7 +166,189 @@ describe("web auto-reply", () => {
     expect(payload.Body).toContain("Alice (+111): hello group");
     expect(payload.Body).toContain("[message_id: g1]");
     expect(payload.Body).toContain("@bot ping");
-    expect(payload.Body).toContain("[from: Bob (+222)]");
+    expect(payload.SenderName).toBe("Bob");
+    expect(payload.SenderE164).toBe("+222");
+    expect(payload.SenderId).toBe("+222");
+  });
+
+  it("bypasses mention gating for owner /new in group chats", async () => {
+    const sendMedia = vi.fn();
+    const reply = vi.fn().mockResolvedValue(undefined);
+    const sendComposing = vi.fn();
+    const resolver = vi.fn().mockResolvedValue({ text: "ok" });
+
+    let capturedOnMessage:
+      | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
+      | undefined;
+    const listenerFactory = async (opts: {
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
+    }) => {
+      capturedOnMessage = opts.onMessage;
+      return { close: vi.fn() };
+    };
+
+    setLoadConfigMock(() => ({
+      channels: {
+        whatsapp: {
+          allowFrom: ["+111"],
+        },
+      },
+    }));
+
+    await monitorWebChannel(false, listenerFactory, false, resolver);
+    expect(capturedOnMessage).toBeDefined();
+
+    await capturedOnMessage?.({
+      body: "/new",
+      from: "123@g.us",
+      conversationId: "123@g.us",
+      chatId: "123@g.us",
+      chatType: "group",
+      to: "+2",
+      id: "g-new",
+      senderE164: "+111",
+      senderName: "Owner",
+      selfE164: "+999",
+      sendComposing,
+      reply,
+      sendMedia,
+    });
+
+    expect(resolver).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not bypass mention gating for non-owner /new in group chats", async () => {
+    const sendMedia = vi.fn();
+    const reply = vi.fn().mockResolvedValue(undefined);
+    const sendComposing = vi.fn();
+    const resolver = vi.fn().mockResolvedValue({ text: "ok" });
+
+    let capturedOnMessage:
+      | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
+      | undefined;
+    const listenerFactory = async (opts: {
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
+    }) => {
+      capturedOnMessage = opts.onMessage;
+      return { close: vi.fn() };
+    };
+
+    setLoadConfigMock(() => ({
+      channels: {
+        whatsapp: {
+          allowFrom: ["+999"],
+        },
+      },
+    }));
+
+    await monitorWebChannel(false, listenerFactory, false, resolver);
+    expect(capturedOnMessage).toBeDefined();
+
+    await capturedOnMessage?.({
+      body: "/new",
+      from: "123@g.us",
+      conversationId: "123@g.us",
+      chatId: "123@g.us",
+      chatType: "group",
+      to: "+2",
+      id: "g-new-unauth",
+      senderE164: "+111",
+      senderName: "NotOwner",
+      selfE164: "+999",
+      sendComposing,
+      reply,
+      sendMedia,
+    });
+
+    expect(resolver).not.toHaveBeenCalled();
+  });
+
+  it("bypasses mention gating for owner /status in group chats", async () => {
+    const sendMedia = vi.fn();
+    const reply = vi.fn().mockResolvedValue(undefined);
+    const sendComposing = vi.fn();
+    const resolver = vi.fn().mockResolvedValue({ text: "ok" });
+
+    let capturedOnMessage:
+      | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
+      | undefined;
+    const listenerFactory = async (opts: {
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
+    }) => {
+      capturedOnMessage = opts.onMessage;
+      return { close: vi.fn() };
+    };
+
+    setLoadConfigMock(() => ({
+      channels: {
+        whatsapp: {
+          allowFrom: ["+111"],
+        },
+      },
+    }));
+
+    await monitorWebChannel(false, listenerFactory, false, resolver);
+    expect(capturedOnMessage).toBeDefined();
+
+    await capturedOnMessage?.({
+      body: "/status",
+      from: "123@g.us",
+      conversationId: "123@g.us",
+      chatId: "123@g.us",
+      chatType: "group",
+      to: "+2",
+      id: "g-status",
+      senderE164: "+111",
+      senderName: "Owner",
+      selfE164: "+999",
+      sendComposing,
+      reply,
+      sendMedia,
+    });
+
+    expect(resolver).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes conversation id through as From for group replies", async () => {
+    const sendMedia = vi.fn();
+    const reply = vi.fn().mockResolvedValue(undefined);
+    const sendComposing = vi.fn();
+    const resolver = vi.fn().mockResolvedValue({ text: "ok" });
+
+    let capturedOnMessage:
+      | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
+      | undefined;
+    const listenerFactory = async (opts: {
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
+    }) => {
+      capturedOnMessage = opts.onMessage;
+      return { close: vi.fn() };
+    };
+
+    await monitorWebChannel(false, listenerFactory, false, resolver);
+    expect(capturedOnMessage).toBeDefined();
+
+    await capturedOnMessage?.({
+      body: "@bot ping",
+      from: "123@g.us",
+      conversationId: "123@g.us",
+      chatId: "123@g.us",
+      chatType: "group",
+      to: "+2",
+      id: "g1",
+      senderE164: "+222",
+      senderName: "Bob",
+      mentionedJids: ["999@s.whatsapp.net"],
+      selfE164: "+999",
+      selfJid: "999@s.whatsapp.net",
+      sendComposing,
+      reply,
+      sendMedia,
+    });
+
+    const payload = resolver.mock.calls[0]?.[0] as { From?: string; To?: string };
+    expect(payload.From).toBe("123@g.us");
+    expect(payload.To).toBe("+2");
   });
   it("detects LID mentions using authDir mapping", async () => {
     const sendMedia = vi.fn();
@@ -185,17 +360,13 @@ describe("web auto-reply", () => {
       | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
       | undefined;
     const listenerFactory = async (opts: {
-      onMessage: (
-        msg: import("./inbound.js").WebInboundMessage,
-      ) => Promise<void>;
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
     }) => {
       capturedOnMessage = opts.onMessage;
       return { close: vi.fn() };
     };
 
-    const authDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "clawdbot-wa-auth-"),
-    );
+    const authDir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdbot-wa-auth-"));
 
     try {
       await fs.writeFile(
@@ -267,17 +438,13 @@ describe("web auto-reply", () => {
       | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
       | undefined;
     const listenerFactory = async (opts: {
-      onMessage: (
-        msg: import("./inbound.js").WebInboundMessage,
-      ) => Promise<void>;
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
     }) => {
       capturedOnMessage = opts.onMessage;
       return { close: vi.fn() };
     };
 
-    const authDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "clawdbot-wa-auth-"),
-    );
+    const authDir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdbot-wa-auth-"));
 
     try {
       await fs.writeFile(
@@ -332,9 +499,7 @@ describe("web auto-reply", () => {
       | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
       | undefined;
     const listenerFactory = async (opts: {
-      onMessage: (
-        msg: import("./inbound.js").WebInboundMessage,
-      ) => Promise<void>;
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
     }) => {
       capturedOnMessage = opts.onMessage;
       return { close: vi.fn() };

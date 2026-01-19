@@ -12,8 +12,7 @@ vi.mock("../agents/pi-embedded.js", () => ({
   abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
   runEmbeddedPiAgent: vi.fn(),
   queueEmbeddedPiMessage: vi.fn().mockReturnValue(false),
-  resolveEmbeddedSessionLane: (key: string) =>
-    `session:${key.trim() || "main"}`,
+  resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
   isEmbeddedPiRunActive: vi.fn().mockReturnValue(false),
   isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),
 }));
@@ -98,9 +97,7 @@ describe("directive behavior", () => {
         },
       );
 
-      const texts = (Array.isArray(res) ? res : [res])
-        .map((entry) => entry?.text)
-        .filter(Boolean);
+      const texts = (Array.isArray(res) ? res : [res]).map((entry) => entry?.text).filter(Boolean);
       expect(texts).toContain("done");
 
       expect(runEmbeddedPiAgent).toHaveBeenCalledOnce();
@@ -176,7 +173,7 @@ describe("directive behavior", () => {
       vi.mocked(runEmbeddedPiAgent).mockReset();
 
       const res = await getReplyFromConfig(
-        { Body: "/verbose on", From: "+1222", To: "+1222" },
+        { Body: "/verbose on", From: "+1222", To: "+1222", CommandAuthorized: true },
         {},
         {
           agents: {
@@ -200,7 +197,7 @@ describe("directive behavior", () => {
       const storePath = path.join(home, "sessions.json");
 
       const res = await getReplyFromConfig(
-        { Body: "/verbose off", From: "+1222", To: "+1222" },
+        { Body: "/verbose off", From: "+1222", To: "+1222", CommandAuthorized: true },
         {},
         {
           agents: {
@@ -226,7 +223,7 @@ describe("directive behavior", () => {
       vi.mocked(runEmbeddedPiAgent).mockReset();
 
       const res = await getReplyFromConfig(
-        { Body: "/think", From: "+1222", To: "+1222" },
+        { Body: "/think", From: "+1222", To: "+1222", CommandAuthorized: true },
         {},
         {
           agents: {
@@ -251,7 +248,7 @@ describe("directive behavior", () => {
       vi.mocked(runEmbeddedPiAgent).mockReset();
 
       const res = await getReplyFromConfig(
-        { Body: "/think", From: "+1222", To: "+1222" },
+        { Body: "/think", From: "+1222", To: "+1222", CommandAuthorized: true },
         {},
         {
           agents: {

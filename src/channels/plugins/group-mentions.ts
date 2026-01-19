@@ -6,7 +6,7 @@ import { resolveSlackAccount } from "../../slack/accounts.js";
 type GroupMentionParams = {
   cfg: ClawdbotConfig;
   groupId?: string | null;
-  groupRoom?: string | null;
+  groupChannel?: string | null;
   groupSpace?: string | null;
   accountId?: string | null;
 };
@@ -57,8 +57,7 @@ function resolveTelegramRequireMention(params: {
   if (!chatId) return undefined;
   const groupConfig = cfg.channels?.telegram?.groups?.[chatId];
   const groupDefault = cfg.channels?.telegram?.groups?.["*"];
-  const topicConfig =
-    topicId && groupConfig?.topics ? groupConfig.topics[topicId] : undefined;
+  const topicConfig = topicId && groupConfig?.topics ? groupConfig.topics[topicId] : undefined;
   const defaultTopicConfig =
     topicId && groupDefault?.topics ? groupDefault.topics[topicId] : undefined;
   if (typeof topicConfig?.requireMention === "boolean") {
@@ -76,10 +75,7 @@ function resolveTelegramRequireMention(params: {
   return undefined;
 }
 
-function resolveDiscordGuildEntry(
-  guilds: DiscordConfig["guilds"],
-  groupSpace?: string | null,
-) {
+function resolveDiscordGuildEntry(guilds: DiscordConfig["guilds"], groupSpace?: string | null) {
   if (!guilds || Object.keys(guilds).length === 0) return null;
   const space = groupSpace?.trim() ?? "";
   if (space && guilds[space]) return guilds[space];
@@ -112,9 +108,7 @@ export function resolveTelegramGroupRequireMention(
   });
 }
 
-export function resolveWhatsAppGroupRequireMention(
-  params: GroupMentionParams,
-): boolean {
+export function resolveWhatsAppGroupRequireMention(params: GroupMentionParams): boolean {
   return resolveChannelGroupRequireMention({
     cfg: params.cfg,
     channel: "whatsapp",
@@ -123,9 +117,7 @@ export function resolveWhatsAppGroupRequireMention(
   });
 }
 
-export function resolveIMessageGroupRequireMention(
-  params: GroupMentionParams,
-): boolean {
+export function resolveIMessageGroupRequireMention(params: GroupMentionParams): boolean {
   return resolveChannelGroupRequireMention({
     cfg: params.cfg,
     channel: "imessage",
@@ -134,24 +126,21 @@ export function resolveIMessageGroupRequireMention(
   });
 }
 
-export function resolveDiscordGroupRequireMention(
-  params: GroupMentionParams,
-): boolean {
+export function resolveDiscordGroupRequireMention(params: GroupMentionParams): boolean {
   const guildEntry = resolveDiscordGuildEntry(
     params.cfg.channels?.discord?.guilds,
     params.groupSpace,
   );
   const channelEntries = guildEntry?.channels;
   if (channelEntries && Object.keys(channelEntries).length > 0) {
-    const channelSlug = normalizeDiscordSlug(params.groupRoom);
+    const groupChannel = params.groupChannel;
+    const channelSlug = normalizeDiscordSlug(groupChannel);
     const entry =
       (params.groupId ? channelEntries[params.groupId] : undefined) ??
       (channelSlug
         ? (channelEntries[channelSlug] ?? channelEntries[`#${channelSlug}`])
         : undefined) ??
-      (params.groupRoom
-        ? channelEntries[normalizeDiscordSlug(params.groupRoom)]
-        : undefined);
+      (groupChannel ? channelEntries[normalizeDiscordSlug(groupChannel)] : undefined);
     if (entry && typeof entry.requireMention === "boolean") {
       return entry.requireMention;
     }
@@ -162,9 +151,7 @@ export function resolveDiscordGroupRequireMention(
   return true;
 }
 
-export function resolveSlackGroupRequireMention(
-  params: GroupMentionParams,
-): boolean {
+export function resolveSlackGroupRequireMention(params: GroupMentionParams): boolean {
   const account = resolveSlackAccount({
     cfg: params.cfg,
     accountId: params.accountId,
@@ -173,7 +160,8 @@ export function resolveSlackGroupRequireMention(
   const keys = Object.keys(channels);
   if (keys.length === 0) return true;
   const channelId = params.groupId?.trim();
-  const channelName = params.groupRoom?.replace(/^#/, "");
+  const groupChannel = params.groupChannel;
+  const channelName = groupChannel?.replace(/^#/, "");
   const normalizedName = normalizeSlackSlug(channelName);
   const candidates = [
     channelId ?? "",

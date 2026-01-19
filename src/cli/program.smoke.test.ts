@@ -25,6 +25,7 @@ vi.mock("../commands/configure.js", () => ({
   CONFIGURE_WIZARD_SECTIONS: [
     "workspace",
     "model",
+    "web",
     "gateway",
     "daemon",
     "channels",
@@ -42,6 +43,11 @@ vi.mock("../tui/tui.js", () => ({ runTui }));
 vi.mock("../gateway/call.js", () => ({
   callGateway,
   randomIdempotencyKey: () => "idem-test",
+  buildGatewayConnectionDetails: () => ({
+    url: "ws://127.0.0.1:1234",
+    urlSource: "test",
+    message: "Gateway target: ws://127.0.0.1:1234",
+  }),
 }));
 vi.mock("./deps.js", () => ({ createDefaultDeps: () => ({}) }));
 
@@ -55,12 +61,9 @@ describe("cli program (smoke)", () => {
 
   it("runs message with required options", async () => {
     const program = buildProgram();
-    await program.parseAsync(
-      ["message", "send", "--to", "+1", "--message", "hi"],
-      {
-        from: "user",
-      },
-    );
+    await program.parseAsync(["message", "send", "--target", "+1", "--message", "hi"], {
+      from: "user",
+    });
     expect(messageCommand).toHaveBeenCalled();
   });
 
@@ -70,12 +73,16 @@ describe("cli program (smoke)", () => {
     expect(statusCommand).toHaveBeenCalled();
   });
 
+  it("registers memory command", () => {
+    const program = buildProgram();
+    const names = program.commands.map((command) => command.name());
+    expect(names).toContain("memory");
+  });
+
   it("runs tui without overriding timeout", async () => {
     const program = buildProgram();
     await program.parseAsync(["tui"], { from: "user" });
-    expect(runTui).toHaveBeenCalledWith(
-      expect.objectContaining({ timeoutMs: undefined }),
-    );
+    expect(runTui).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: undefined }));
   });
 
   it("runs tui with explicit timeout override", async () => {
@@ -83,20 +90,14 @@ describe("cli program (smoke)", () => {
     await program.parseAsync(["tui", "--timeout-ms", "45000"], {
       from: "user",
     });
-    expect(runTui).toHaveBeenCalledWith(
-      expect.objectContaining({ timeoutMs: 45000 }),
-    );
+    expect(runTui).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 45000 }));
   });
 
   it("warns and ignores invalid tui timeout override", async () => {
     const program = buildProgram();
     await program.parseAsync(["tui", "--timeout-ms", "nope"], { from: "user" });
-    expect(runtime.error).toHaveBeenCalledWith(
-      'warning: invalid --timeout-ms "nope"; ignoring',
-    );
-    expect(runTui).toHaveBeenCalledWith(
-      expect.objectContaining({ timeoutMs: undefined }),
-    );
+    expect(runtime.error).toHaveBeenCalledWith('warning: invalid --timeout-ms "nope"; ignoring');
+    expect(runTui).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: undefined }));
   });
 
   it("runs config alias as configure", async () => {
@@ -190,6 +191,29 @@ describe("cli program (smoke)", () => {
     );
   });
 
+  it("passes kimi code api key to onboard", async () => {
+    const program = buildProgram();
+    await program.parseAsync(
+      [
+        "onboard",
+        "--non-interactive",
+        "--auth-choice",
+        "kimi-code-api-key",
+        "--kimi-code-api-key",
+        "sk-kimi-code-test",
+      ],
+      { from: "user" },
+    );
+    expect(onboardCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nonInteractive: true,
+        authChoice: "kimi-code-api-key",
+        kimiCodeApiKey: "sk-kimi-code-test",
+      }),
+      runtime,
+    );
+  });
+
   it("passes synthetic api key to onboard", async () => {
     const program = buildProgram();
     await program.parseAsync(
@@ -252,9 +276,6 @@ describe("cli program (smoke)", () => {
     await program.parseAsync(["channels", "logout", "--account", "work"], {
       from: "user",
     });
-    expect(runChannelLogout).toHaveBeenCalledWith(
-      { channel: undefined, account: "work" },
-      runtime,
-    );
+    expect(runChannelLogout).toHaveBeenCalledWith({ channel: undefined, account: "work" }, runtime);
   });
 });

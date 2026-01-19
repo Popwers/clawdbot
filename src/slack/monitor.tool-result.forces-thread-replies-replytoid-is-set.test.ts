@@ -31,27 +31,36 @@ vi.mock("../auto-reply/reply.js", () => ({
   getReplyFromConfig: (...args: unknown[]) => replyMock(...args),
 }));
 
+vi.mock("./resolve-channels.js", () => ({
+  resolveSlackChannelAllowlist: async ({ entries }: { entries: string[] }) =>
+    entries.map((input) => ({ input, resolved: false })),
+}));
+
+vi.mock("./resolve-users.js", () => ({
+  resolveSlackUserAllowlist: async ({ entries }: { entries: string[] }) =>
+    entries.map((input) => ({ input, resolved: false })),
+}));
+
 vi.mock("./send.js", () => ({
   sendMessageSlack: (...args: unknown[]) => sendMock(...args),
 }));
 
 vi.mock("../pairing/pairing-store.js", () => ({
-  readChannelAllowFromStore: (...args: unknown[]) =>
-    readAllowFromStoreMock(...args),
-  upsertChannelPairingRequest: (...args: unknown[]) =>
-    upsertPairingRequestMock(...args),
+  readChannelAllowFromStore: (...args: unknown[]) => readAllowFromStoreMock(...args),
+  upsertChannelPairingRequest: (...args: unknown[]) => upsertPairingRequestMock(...args),
 }));
 
 vi.mock("../config/sessions.js", () => ({
   resolveStorePath: vi.fn(() => "/tmp/clawdbot-sessions.json"),
   updateLastRoute: (...args: unknown[]) => updateLastRouteMock(...args),
   resolveSessionKey: vi.fn(),
+  readSessionUpdatedAt: vi.fn(() => undefined),
+  recordSessionMetaFromInbound: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@slack/bolt", () => {
   const handlers = new Map<string, (args: unknown) => Promise<void>>();
-  (globalThis as { __slackHandlers?: typeof handlers }).__slackHandlers =
-    handlers;
+  (globalThis as { __slackHandlers?: typeof handlers }).__slackHandlers = handlers;
   const client = {
     auth: { test: vi.fn().mockResolvedValue({ user_id: "bot-user" }) },
     conversations: {
@@ -100,6 +109,7 @@ async function waitForEvent(name: string) {
 
 beforeEach(() => {
   resetInboundDedupe();
+  getSlackHandlers()?.clear();
   config = {
     messages: {
       responsePrefix: "PFX",
@@ -118,9 +128,7 @@ beforeEach(() => {
   updateLastRouteMock.mockReset();
   reactMock.mockReset();
   readAllowFromStoreMock.mockReset().mockResolvedValue([]);
-  upsertPairingRequestMock
-    .mockReset()
-    .mockResolvedValue({ code: "PAIRCODE", created: true });
+  upsertPairingRequestMock.mockReset().mockResolvedValue({ code: "PAIRCODE", created: true });
 });
 
 describe("monitorSlackProvider tool results", () => {
@@ -255,12 +263,8 @@ describe("monitorSlackProvider tool results", () => {
     expect(replyMock).not.toHaveBeenCalled();
     expect(upsertPairingRequestMock).toHaveBeenCalled();
     expect(sendMock).toHaveBeenCalledTimes(1);
-    expect(String(sendMock.mock.calls[0]?.[1] ?? "")).toContain(
-      "Your Slack user id: U1",
-    );
-    expect(String(sendMock.mock.calls[0]?.[1] ?? "")).toContain(
-      "Pairing code: PAIRCODE",
-    );
+    expect(String(sendMock.mock.calls[0]?.[1] ?? "")).toContain("Your Slack user id: U1");
+    expect(String(sendMock.mock.calls[0]?.[1] ?? "")).toContain("Pairing code: PAIRCODE");
   });
 
   it("does not resend pairing code when a request is already pending", async () => {

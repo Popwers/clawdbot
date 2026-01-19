@@ -1,8 +1,4 @@
-import type {
-  BlockStreamingCoalesceConfig,
-  DmPolicy,
-  GroupPolicy,
-} from "./types.base.js";
+import type { BlockStreamingCoalesceConfig, DmPolicy, GroupPolicy } from "./types.base.js";
 import type { DmConfig } from "./types.messages.js";
 
 export type IMessageAccountConfig = {
@@ -10,12 +6,16 @@ export type IMessageAccountConfig = {
   name?: string;
   /** Optional provider capability tags used for agent/runtime guidance. */
   capabilities?: string[];
+  /** Allow channel-initiated config writes (default: true). */
+  configWrites?: boolean;
   /** If false, do not start this iMessage account. Default: true. */
   enabled?: boolean;
   /** imsg CLI binary path (default: imsg). */
   cliPath?: string;
   /** Optional Messages db path override. */
   dbPath?: string;
+  /** Remote host for SCP when attachments live on a different machine (e.g., clawdbot@192.168.64.3). */
+  remoteHost?: string;
   /** Optional default send service (imessage|sms|auto). */
   service?: "imessage" | "sms" | "auto";
   /** Optional default region (used when sending SMS). */

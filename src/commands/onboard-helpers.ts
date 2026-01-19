@@ -5,10 +5,7 @@ import { inspect } from "node:util";
 
 import { cancel, isCancel } from "@clack/prompts";
 
-import {
-  DEFAULT_AGENT_WORKSPACE_DIR,
-  ensureAgentWorkspace,
-} from "../agents/workspace.js";
+import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../agents/workspace.js";
 import type { ClawdbotConfig } from "../config/config.js";
 import { CONFIG_PATH_CLAWDBOT } from "../config/config.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions.js";
@@ -16,20 +13,14 @@ import { callGateway } from "../gateway/call.js";
 import { normalizeControlUiBasePath } from "../gateway/control-ui.js";
 import { isSafeExecutableValue } from "../infra/exec-safety.js";
 import { pickPrimaryTailnetIPv4 } from "../infra/tailnet.js";
+import { isWSL } from "../infra/wsl.js";
 import { runCommandWithTimeout } from "../process/exec.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { stylePromptTitle } from "../terminal/prompt-style.js";
-import {
-  GATEWAY_CLIENT_MODES,
-  GATEWAY_CLIENT_NAMES,
-} from "../utils/message-channel.js";
-import { CONFIG_DIR, resolveUserPath } from "../utils.js";
+import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
+import { CONFIG_DIR, resolveUserPath, sleep } from "../utils.js";
 import { VERSION } from "../version.js";
-import type {
-  NodeManagerChoice,
-  OnboardMode,
-  ResetScope,
-} from "./onboard-types.js";
+import type { NodeManagerChoice, OnboardMode, ResetScope } from "./onboard-types.js";
 
 export function guardCancel<T>(value: T | symbol, runtime: RuntimeEnv): T {
   if (isCancel(value)) {
@@ -44,10 +35,7 @@ export function summarizeExistingConfig(config: ClawdbotConfig): string {
   const defaults = config.agents?.defaults;
   if (defaults?.workspace) rows.push(`workspace: ${defaults.workspace}`);
   if (defaults?.model) {
-    const model =
-      typeof defaults.model === "string"
-        ? defaults.model
-        : defaults.model.primary;
+    const model = typeof defaults.model === "string" ? defaults.model : defaults.model.primary;
     if (model) rows.push(`model: ${model}`);
   }
   if (config.gateway?.mode) rows.push(`gateway.mode: ${config.gateway.mode}`);
@@ -84,8 +72,7 @@ export function applyWizardMetadata(
   cfg: ClawdbotConfig,
   params: { command: string; mode: OnboardMode },
 ): ClawdbotConfig {
-  const commit =
-    process.env.GIT_COMMIT?.trim() || process.env.GIT_SHA?.trim() || undefined;
+  const commit = process.env.GIT_COMMIT?.trim() || process.env.GIT_SHA?.trim() || undefined;
   return {
     ...cfg,
     wizard: {
@@ -105,31 +92,6 @@ type BrowserOpenSupport = {
   command?: string;
 };
 
-let wslCached: boolean | null = null;
-
-async function isWSL(): Promise<boolean> {
-  if (wslCached !== null) return wslCached;
-  if (process.platform !== "linux") {
-    wslCached = false;
-    return wslCached;
-  }
-  if (
-    process.env.WSL_INTEROP ||
-    process.env.WSL_DISTRO_NAME ||
-    process.env.WSLENV
-  ) {
-    wslCached = true;
-    return wslCached;
-  }
-  try {
-    const release = (await fs.readFile("/proc/version", "utf8")).toLowerCase();
-    wslCached = release.includes("microsoft") || release.includes("wsl");
-  } catch {
-    wslCached = false;
-  }
-  return wslCached;
-}
-
 type BrowserOpenCommand = {
   argv: string[] | null;
   reason?: string;
@@ -143,9 +105,7 @@ type BrowserOpenCommand = {
 
 export async function resolveBrowserOpenCommand(): Promise<BrowserOpenCommand> {
   const platform = process.platform;
-  const hasDisplay = Boolean(
-    process.env.DISPLAY || process.env.WAYLAND_DISPLAY,
-  );
+  const hasDisplay = Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
   const isSsh =
     Boolean(process.env.SSH_CLIENT) ||
     Boolean(process.env.SSH_TTY) ||
@@ -165,9 +125,7 @@ export async function resolveBrowserOpenCommand(): Promise<BrowserOpenCommand> {
 
   if (platform === "darwin") {
     const hasOpen = await detectBinary("open");
-    return hasOpen
-      ? { argv: ["open"], command: "open" }
-      : { argv: null, reason: "missing-open" };
+    return hasOpen ? { argv: ["open"], command: "open" } : { argv: null, reason: "missing-open" };
   }
 
   if (platform === "linux") {
@@ -203,9 +161,7 @@ export function formatControlUiSshHint(params: {
   const basePath = normalizeControlUiBasePath(params.basePath);
   const uiPath = basePath ? `${basePath}/` : "/";
   const localUrl = `http://localhost:${params.port}${uiPath}`;
-  const tokenParam = params.token
-    ? `?token=${encodeURIComponent(params.token)}`
-    : "";
+  const tokenParam = params.token ? `?token=${encodeURIComponent(params.token)}` : "";
   const authedUrl = params.token ? `${localUrl}${tokenParam}` : undefined;
   const sshTarget = resolveSshTargetHint();
   return [
@@ -255,28 +211,6 @@ export async function openUrl(url: string): Promise<boolean> {
   }
 }
 
-export async function copyToClipboard(value: string): Promise<boolean> {
-  const attempts: Array<{ argv: string[] }> = [
-    { argv: ["pbcopy"] },
-    { argv: ["xclip", "-selection", "clipboard"] },
-    { argv: ["wl-copy"] },
-    { argv: ["clip.exe"] }, // WSL / Windows
-    { argv: ["powershell", "-NoProfile", "-Command", "Set-Clipboard"] },
-  ];
-  for (const attempt of attempts) {
-    try {
-      const result = await runCommandWithTimeout(attempt.argv, {
-        timeoutMs: 3_000,
-        input: value,
-      });
-      if (result.code === 0 && !result.killed) return true;
-    } catch {
-      // keep trying the next fallback
-    }
-  }
-  return false;
-}
-
 export async function ensureWorkspaceAndSessions(
   workspaceDir: string,
   runtime: RuntimeEnv,
@@ -303,10 +237,7 @@ export function resolveNodeManagerOptions(): Array<{
   ];
 }
 
-export async function moveToTrash(
-  pathname: string,
-  runtime: RuntimeEnv,
-): Promise<void> {
+export async function moveToTrash(pathname: string, runtime: RuntimeEnv): Promise<void> {
   if (!pathname) return;
   try {
     await fs.access(pathname);
@@ -321,11 +252,7 @@ export async function moveToTrash(
   }
 }
 
-export async function handleReset(
-  scope: ResetScope,
-  workspaceDir: string,
-  runtime: RuntimeEnv,
-) {
+export async function handleReset(scope: ResetScope, workspaceDir: string, runtime: RuntimeEnv) {
   await moveToTrash(CONFIG_PATH_CLAWDBOT, runtime);
   if (scope === "config") return;
   await moveToTrash(path.join(CONFIG_DIR, "credentials"), runtime);
@@ -353,10 +280,7 @@ export async function detectBinary(name: string): Promise<boolean> {
     }
   }
 
-  const command =
-    process.platform === "win32"
-      ? ["where", name]
-      : ["/usr/bin/env", "which", name];
+  const command = process.platform === "win32" ? ["where", name] : ["/usr/bin/env", "which", name];
   try {
     const result = await runCommandWithTimeout(command, { timeoutMs: 2000 });
     return result.code === 0 && result.stdout.trim().length > 0;
@@ -387,6 +311,38 @@ export async function probeGatewayReachable(params: {
   } catch (err) {
     return { ok: false, detail: summarizeError(err) };
   }
+}
+
+export async function waitForGatewayReachable(params: {
+  url: string;
+  token?: string;
+  password?: string;
+  /** Total time to wait before giving up. */
+  deadlineMs?: number;
+  /** Per-probe timeout (each probe makes a full gateway health request). */
+  probeTimeoutMs?: number;
+  /** Delay between probes. */
+  pollMs?: number;
+}): Promise<{ ok: boolean; detail?: string }> {
+  const deadlineMs = params.deadlineMs ?? 15_000;
+  const pollMs = params.pollMs ?? 400;
+  const probeTimeoutMs = params.probeTimeoutMs ?? 1500;
+  const startedAt = Date.now();
+  let lastDetail: string | undefined;
+
+  while (Date.now() - startedAt < deadlineMs) {
+    const probe = await probeGatewayReachable({
+      url: params.url,
+      token: params.token,
+      password: params.password,
+      timeoutMs: probeTimeoutMs,
+    });
+    if (probe.ok) return probe;
+    lastDetail = probe.detail;
+    await sleep(pollMs);
+  }
+
+  return { ok: false, detail: lastDetail };
 }
 
 function summarizeError(err: unknown): string {

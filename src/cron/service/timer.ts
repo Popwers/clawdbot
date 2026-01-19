@@ -1,10 +1,6 @@
 import type { HeartbeatRunResult } from "../../infra/heartbeat-wake.js";
 import type { CronJob } from "../types.js";
-import {
-  computeJobNextRunAtMs,
-  nextWakeAtMs,
-  resolveJobPayloadTextForMain,
-} from "./jobs.js";
+import { computeJobNextRunAtMs, nextWakeAtMs, resolveJobPayloadTextForMain } from "./jobs.js";
 import { locked } from "./locked.js";
 import type { CronEvent, CronServiceState } from "./state.js";
 import { ensureLoaded, persist } from "./store.js";
@@ -74,6 +70,7 @@ export async function executeJob(
     status: "ok" | "error" | "skipped",
     err?: string,
     summary?: string,
+    outputText?: string,
   ) => {
     const endedAt = state.deps.nowMs();
     job.state.runningAtMs = undefined;
@@ -83,9 +80,7 @@ export async function executeJob(
     job.state.lastError = err;
 
     const shouldDelete =
-      job.schedule.kind === "at" &&
-      status === "ok" &&
-      job.deleteAfterRun === true;
+      job.schedule.kind === "at" && status === "ok" && job.deleteAfterRun === true;
 
     if (!shouldDelete) {
       if (job.schedule.kind === "at" && status === "ok") {
@@ -118,7 +113,19 @@ export async function executeJob(
 
     if (job.sessionTarget === "isolated") {
       const prefix = job.isolation?.postToMainPrefix?.trim() || "Cron";
-      const body = (summary ?? err ?? status).trim();
+      const mode = job.isolation?.postToMainMode ?? "summary";
+
+      let body = (summary ?? err ?? status).trim();
+      if (mode === "full") {
+        // Prefer full agent output if available; fall back to summary.
+        const maxCharsRaw = job.isolation?.postToMainMaxChars;
+        const maxChars = Number.isFinite(maxCharsRaw) ? Math.max(0, maxCharsRaw as number) : 8000;
+        const fullText = (outputText ?? "").trim();
+        if (fullText) {
+          body = fullText.length > maxChars ? `${fullText.slice(0, maxChars)}…` : fullText;
+        }
+      }
+
       const statusPrefix = status === "ok" ? prefix : `${prefix} (${status})`;
       state.deps.enqueueSystemEvent(`${statusPrefix}: ${body}`, {
         agentId: job.agentId,
@@ -145,8 +152,7 @@ export async function executeJob(
       state.deps.enqueueSystemEvent(text, { agentId: job.agentId });
       if (job.wakeMode === "now" && state.deps.runHeartbeatOnce) {
         const reason = `cron:${job.id}`;
-        const delay = (ms: number) =>
-          new Promise<void>((resolve) => setTimeout(resolve, ms));
+        const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
         const maxWaitMs = 2 * 60_000;
         const waitStartedAt = state.deps.nowMs();
 
@@ -193,10 +199,10 @@ export async function executeJob(
       job,
       message: job.payload.message,
     });
-    if (res.status === "ok") await finish("ok", undefined, res.summary);
+    if (res.status === "ok") await finish("ok", undefined, res.summary, res.outputText);
     else if (res.status === "skipped")
-      await finish("skipped", undefined, res.summary);
-    else await finish("error", res.error ?? "cron job failed", res.summary);
+      await finish("skipped", undefined, res.summary, res.outputText);
+    else await finish("error", res.error ?? "cron job failed", res.summary, res.outputText);
   } catch (err) {
     await finish("error", String(err));
   } finally {

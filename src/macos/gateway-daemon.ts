@@ -45,20 +45,26 @@ async function main() {
     { startGatewayServer },
     { setGatewayWsLogStyle },
     { setVerbose },
+    { consumeGatewaySigusr1RestartAuthorization, isGatewaySigusr1RestartExternallyAllowed },
     { defaultRuntime },
+    { enableConsoleCapture, setConsoleTimestampPrefix },
   ] = await Promise.all([
     import("../config/config.js"),
     import("../gateway/server.js"),
     import("../gateway/ws-logging.js"),
     import("../globals.js"),
+    import("../infra/restart.js"),
     import("../runtime.js"),
+    import("../logging.js"),
   ]);
 
+  enableConsoleCapture();
+  setConsoleTimestampPrefix(true);
   setVerbose(hasFlag(args, "--verbose"));
 
-  const wsLogRaw = (
-    hasFlag(args, "--compact") ? "compact" : argValue(args, "--ws-log")
-  ) as string | undefined;
+  const wsLogRaw = (hasFlag(args, "--compact") ? "compact" : argValue(args, "--ws-log")) as
+    | string
+    | undefined;
   const wsLogStyle: GatewayWsLogStyle =
     wsLogRaw === "compact" ? "compact" : wsLogRaw === "full" ? "full" : "auto";
   setGatewayWsLogStyle(wsLogStyle);
@@ -81,16 +87,11 @@ async function main() {
     cfg.gateway?.bind ??
     "loopback";
   const bind =
-    bindRaw === "loopback" ||
-    bindRaw === "lan" ||
-    bindRaw === "auto" ||
-    bindRaw === "custom"
+    bindRaw === "loopback" || bindRaw === "lan" || bindRaw === "auto" || bindRaw === "custom"
       ? bindRaw
       : null;
   if (!bind) {
-    defaultRuntime.error(
-      'Invalid --bind (use "loopback", "lan", "auto", or "custom")',
-    );
+    defaultRuntime.error('Invalid --bind (use "loopback", "lan", "auto", or "custom")');
     process.exit(1);
   }
 
@@ -110,9 +111,7 @@ async function main() {
 
   const request = (action: "stop" | "restart", signal: string) => {
     if (shuttingDown) {
-      defaultRuntime.log(
-        `gateway: received ${signal} during shutdown; ignoring`,
-      );
+      defaultRuntime.log(`gateway: received ${signal} during shutdown; ignoring`);
       return;
     }
     shuttingDown = true;
@@ -122,9 +121,7 @@ async function main() {
     );
 
     forceExitTimer = setTimeout(() => {
-      defaultRuntime.error(
-        "gateway: shutdown timed out; exiting without full cleanup",
-      );
+      defaultRuntime.error("gateway: shutdown timed out; exiting without full cleanup");
       cleanupSignals();
       process.exit(0);
     }, 5000);
@@ -161,6 +158,13 @@ async function main() {
   };
   const onSigusr1 = () => {
     defaultRuntime.log("gateway: signal SIGUSR1 received");
+    const authorized = consumeGatewaySigusr1RestartAuthorization();
+    if (!authorized && !isGatewaySigusr1RestartExternallyAllowed()) {
+      defaultRuntime.log(
+        "gateway: SIGUSR1 restart ignored (not authorized; enable commands.restart or use gateway tool).",
+      );
+      return;
+    }
     request("restart", "SIGUSR1");
   };
 
@@ -187,4 +191,10 @@ async function main() {
   }
 }
 
-void main();
+void main().catch((err) => {
+  console.error(
+    "[clawdbot] Gateway daemon failed:",
+    err instanceof Error ? (err.stack ?? err.message) : err,
+  );
+  process.exit(1);
+});

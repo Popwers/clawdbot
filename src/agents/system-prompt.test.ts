@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAgentSystemPrompt } from "./system-prompt.js";
+import { buildAgentSystemPrompt, buildRuntimeLine } from "./system-prompt.js";
 
 describe("buildAgentSystemPrompt", () => {
   it("includes owner numbers when provided", () => {
@@ -23,6 +23,32 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).not.toContain("Owner numbers:");
   });
 
+  it("omits extended sections in minimal prompt mode", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/clawd",
+      promptMode: "minimal",
+      ownerNumbers: ["+123"],
+      skillsPrompt:
+        "<available_skills>\n  <skill>\n    <name>demo</name>\n  </skill>\n</available_skills>",
+      heartbeatPrompt: "ping",
+      toolNames: ["message", "memory_search"],
+      docsPath: "/tmp/clawd/docs",
+      extraSystemPrompt: "Subagent details",
+    });
+
+    expect(prompt).not.toContain("## User Identity");
+    expect(prompt).not.toContain("## Skills");
+    expect(prompt).not.toContain("## Memory Recall");
+    expect(prompt).not.toContain("## Documentation");
+    expect(prompt).not.toContain("## Reply Tags");
+    expect(prompt).not.toContain("## Messaging");
+    expect(prompt).not.toContain("## Silent Replies");
+    expect(prompt).not.toContain("## Heartbeats");
+    expect(prompt).toContain("## Subagent Context");
+    expect(prompt).not.toContain("## Group Chat Context");
+    expect(prompt).toContain("Subagent details");
+  });
+
   it("adds reasoning tag hint when enabled", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/clawd",
@@ -32,6 +58,16 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("## Reasoning Format");
     expect(prompt).toContain("<think>...</think>");
     expect(prompt).toContain("<final>...</final>");
+  });
+
+  it("includes a CLI quick reference section", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/clawd",
+    });
+
+    expect(prompt).toContain("## Clawdbot CLI Quick Reference");
+    expect(prompt).toContain("clawdbot daemon restart");
+    expect(prompt).toContain("Do not invent commands");
   });
 
   it("lists available tools when provided", () => {
@@ -52,24 +88,69 @@ describe("buildAgentSystemPrompt", () => {
       toolNames: ["Read", "Exec", "process"],
       skillsPrompt:
         "<available_skills>\n  <skill>\n    <name>demo</name>\n  </skill>\n</available_skills>",
+      docsPath: "/tmp/clawd/docs",
     });
 
     expect(prompt).toContain("- Read: Read file contents");
     expect(prompt).toContain("- Exec: Run shell commands");
     expect(prompt).toContain(
-      "Use `Read` to load the SKILL.md at the location listed for that skill.",
+      "- If exactly one skill clearly applies: read its SKILL.md at <location> with `Read`, then follow it.",
+    );
+    expect(prompt).toContain("Clawdbot docs: /tmp/clawd/docs");
+    expect(prompt).toContain(
+      "For Clawdbot behavior, commands, config, or architecture: consult local docs first.",
     );
   });
 
-  it("includes user time when provided", () => {
+  it("includes docs guidance when docsPath is provided", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/clawd",
+      docsPath: "/tmp/clawd/docs",
+    });
+
+    expect(prompt).toContain("## Documentation");
+    expect(prompt).toContain("Clawdbot docs: /tmp/clawd/docs");
+    expect(prompt).toContain(
+      "For Clawdbot behavior, commands, config, or architecture: consult local docs first.",
+    );
+  });
+
+  it("includes user time when provided (12-hour)", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/clawd",
       userTimezone: "America/Chicago",
-      userTime: "Monday 2026-01-05 15:26",
+      userTime: "Monday, January 5th, 2026 — 3:26 PM",
+      userTimeFormat: "12",
     });
 
+    expect(prompt).toContain("## Current Date & Time");
+    expect(prompt).toContain("Monday, January 5th, 2026 — 3:26 PM (America/Chicago)");
+    expect(prompt).toContain("Time format: 12-hour");
+  });
+
+  it("includes user time when provided (24-hour)", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/clawd",
+      userTimezone: "America/Chicago",
+      userTime: "Monday, January 5th, 2026 — 15:26",
+      userTimeFormat: "24",
+    });
+
+    expect(prompt).toContain("## Current Date & Time");
+    expect(prompt).toContain("Monday, January 5th, 2026 — 15:26 (America/Chicago)");
+    expect(prompt).toContain("Time format: 24-hour");
+  });
+
+  it("shows UTC fallback when only timezone is provided", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/clawd",
+      userTimezone: "America/Chicago",
+      userTimeFormat: "24",
+    });
+
+    expect(prompt).toContain("## Current Date & Time");
     expect(prompt).toContain(
-      "Time: assume UTC unless stated. User TZ=America/Chicago. Current user time (converted)=Monday 2026-01-05 15:26.",
+      "Time zone: America/Chicago. Current time unknown; assume UTC for date/time references.",
     );
   });
 
@@ -107,7 +188,7 @@ describe("buildAgentSystemPrompt", () => {
 
     expect(prompt).toContain("## Skills");
     expect(prompt).toContain(
-      "Use `read` to load the SKILL.md at the location listed for that skill.",
+      "- If exactly one skill clearly applies: read its SKILL.md at <location> with `read`, then follow it.",
     );
   });
 
@@ -155,6 +236,7 @@ describe("buildAgentSystemPrompt", () => {
 
     expect(prompt).toContain("message: Send messages and channel actions");
     expect(prompt).toContain("### message tool");
+    expect(prompt).toContain("respond with ONLY: NO_REPLY");
   });
 
   it("includes runtime provider capabilities when present", () => {
@@ -170,6 +252,22 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("capabilities=inlineButtons");
   });
 
+  it("includes agent id in runtime when provided", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/clawd",
+      runtimeInfo: {
+        agentId: "work",
+        host: "host",
+        os: "macOS",
+        arch: "arm64",
+        node: "v20",
+        model: "anthropic/claude",
+      },
+    });
+
+    expect(prompt).toContain("agent=work");
+  });
+
   it("includes reasoning visibility hint", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/clawd",
@@ -179,6 +277,31 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Reasoning: off");
     expect(prompt).toContain("/reasoning");
     expect(prompt).toContain("/status shows Reasoning");
+  });
+
+  it("builds runtime line with agent and channel details", () => {
+    const line = buildRuntimeLine(
+      {
+        agentId: "work",
+        host: "host",
+        os: "macOS",
+        arch: "arm64",
+        node: "v20",
+        model: "anthropic/claude",
+      },
+      "telegram",
+      ["inlineButtons"],
+      "low",
+    );
+
+    expect(line).toContain("agent=work");
+    expect(line).toContain("host=host");
+    expect(line).toContain("os=macOS (arm64)");
+    expect(line).toContain("node=v20");
+    expect(line).toContain("model=anthropic/claude");
+    expect(line).toContain("channel=telegram");
+    expect(line).toContain("capabilities=inlineButtons");
+    expect(line).toContain("thinking=low");
   });
 
   it("describes sandboxed runtime and elevated when allowed", () => {
@@ -197,5 +320,18 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Sub-agents stay sandboxed");
     expect(prompt).toContain("User can toggle with /elevated on|off.");
     expect(prompt).toContain("Current elevated level: on");
+  });
+
+  it("includes reaction guidance when provided", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/clawd",
+      reactionGuidance: {
+        level: "minimal",
+        channel: "Telegram",
+      },
+    });
+
+    expect(prompt).toContain("## Reactions");
+    expect(prompt).toContain("Reactions are enabled for Telegram in MINIMAL mode.");
   });
 });

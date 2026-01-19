@@ -1,30 +1,67 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import JSZip from "jszip";
 import sharp from "sharp";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { isPathWithinBase } from "../../test/helpers/paths.js";
-import { withTempHome } from "../../test/helpers/temp-home.js";
 
 describe("media store", () => {
+  let store: typeof import("./store.js");
+  let home = "";
+  const envSnapshot: Record<string, string | undefined> = {};
+
+  const snapshotEnv = () => {
+    for (const key of ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "CLAWDBOT_STATE_DIR"]) {
+      envSnapshot[key] = process.env[key];
+    }
+  };
+
+  const restoreEnv = () => {
+    for (const [key, value] of Object.entries(envSnapshot)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+
+  beforeAll(async () => {
+    snapshotEnv();
+    home = await fs.mkdtemp(path.join(os.tmpdir(), "clawdbot-test-home-"));
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    process.env.CLAWDBOT_STATE_DIR = path.join(home, ".clawdbot");
+    if (process.platform === "win32") {
+      const match = home.match(/^([A-Za-z]:)(.*)$/);
+      if (match) {
+        process.env.HOMEDRIVE = match[1];
+        process.env.HOMEPATH = match[2] || "\\";
+      }
+    }
+    await fs.mkdir(path.join(home, ".clawdbot"), { recursive: true });
+    store = await import("./store.js");
+  });
+
+  afterAll(async () => {
+    restoreEnv();
+    try {
+      await fs.rm(home, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup failures in tests
+    }
+  });
+
   async function withTempStore<T>(
     fn: (store: typeof import("./store.js"), home: string) => Promise<T>,
   ): Promise<T> {
-    return await withTempHome(async (home) => {
-      vi.resetModules();
-      const store = await import("./store.js");
-      return await fn(store, home);
-    });
+    return await fn(store, home);
   }
 
   it("creates and returns media directory", async () => {
     await withTempStore(async (store, home) => {
       const dir = await store.ensureMediaDir();
       expect(isPathWithinBase(home, dir)).toBe(true);
-      expect(path.normalize(dir)).toContain(
-        `${path.sep}.clawdbot${path.sep}media`,
-      );
+      expect(path.normalize(dir)).toContain(`${path.sep}.clawdbot${path.sep}media`);
       const stat = await fs.stat(dir);
       expect(stat.isDirectory()).toBe(true);
     });
@@ -49,9 +86,7 @@ describe("media store", () => {
       expect(savedJpeg.path.endsWith(".jpg")).toBe(true);
 
       const huge = Buffer.alloc(5 * 1024 * 1024 + 1);
-      await expect(store.saveMediaBuffer(huge)).rejects.toThrow(
-        "Media exceeds 5MB limit",
-      );
+      await expect(store.saveMediaBuffer(huge)).rejects.toThrow("Media exceeds 5MB limit");
     });
   });
 

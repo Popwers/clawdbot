@@ -1,4 +1,4 @@
-package com.clawdbot.android.bridge
+package com.clawdbot.android.gateway
 
 import android.content.Context
 import android.net.ConnectivityManager
@@ -44,21 +44,21 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 @Suppress("DEPRECATION")
-class BridgeDiscovery(
+class GatewayDiscovery(
   context: Context,
   private val scope: CoroutineScope,
 ) {
   private val nsd = context.getSystemService(NsdManager::class.java)
   private val connectivity = context.getSystemService(ConnectivityManager::class.java)
   private val dns = DnsResolver.getInstance()
-  private val serviceType = "_clawdbot-bridge._tcp."
+  private val serviceType = "_clawdbot-gateway._tcp."
   private val wideAreaDomain = "clawdbot.internal."
-  private val logTag = "Clawdbot/BridgeDiscovery"
+  private val logTag = "Clawdbot/GatewayDiscovery"
 
-  private val localById = ConcurrentHashMap<String, BridgeEndpoint>()
-  private val unicastById = ConcurrentHashMap<String, BridgeEndpoint>()
-  private val _bridges = MutableStateFlow<List<BridgeEndpoint>>(emptyList())
-  val bridges: StateFlow<List<BridgeEndpoint>> = _bridges.asStateFlow()
+  private val localById = ConcurrentHashMap<String, GatewayEndpoint>()
+  private val unicastById = ConcurrentHashMap<String, GatewayEndpoint>()
+  private val _gateways = MutableStateFlow<List<GatewayEndpoint>>(emptyList())
+  val gateways: StateFlow<List<GatewayEndpoint>> = _gateways.asStateFlow()
 
   private val _statusText = MutableStateFlow("Searching…")
   val statusText: StateFlow<String> = _statusText.asStateFlow()
@@ -77,7 +77,7 @@ class BridgeDiscovery(
       override fun onDiscoveryStopped(serviceType: String) {}
 
       override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-        if (serviceInfo.serviceType != this@BridgeDiscovery.serviceType) return
+        if (serviceInfo.serviceType != this@GatewayDiscovery.serviceType) return
         resolve(serviceInfo)
       }
 
@@ -141,13 +141,12 @@ class BridgeDiscovery(
         val lanHost = txt(resolved, "lanHost")
         val tailnetDns = txt(resolved, "tailnetDns")
         val gatewayPort = txtInt(resolved, "gatewayPort")
-        val bridgePort = txtInt(resolved, "bridgePort")
         val canvasPort = txtInt(resolved, "canvasPort")
-        val tlsEnabled = txtBool(resolved, "bridgeTls")
-        val tlsFingerprint = txt(resolved, "bridgeTlsSha256")
+        val tlsEnabled = txtBool(resolved, "gatewayTls")
+        val tlsFingerprint = txt(resolved, "gatewayTlsSha256")
         val id = stableId(serviceName, "local.")
         localById[id] =
-          BridgeEndpoint(
+          GatewayEndpoint(
             stableId = id,
             name = displayName,
             host = host,
@@ -155,7 +154,6 @@ class BridgeDiscovery(
             lanHost = lanHost,
             tailnetDns = tailnetDns,
             gatewayPort = gatewayPort,
-            bridgePort = bridgePort,
             canvasPort = canvasPort,
             tlsEnabled = tlsEnabled,
             tlsFingerprintSha256 = tlsFingerprint,
@@ -167,7 +165,7 @@ class BridgeDiscovery(
   }
 
   private fun publish() {
-    _bridges.value =
+    _gateways.value =
       (localById.values + unicastById.values).sortedBy { it.name.lowercase() }
     _statusText.value = buildStatusText()
   }
@@ -186,7 +184,7 @@ class BridgeDiscovery(
       }
 
     return when {
-      localCount == 0 && wideRcode == null -> "Searching for bridges…"
+      localCount == 0 && wideRcode == null -> "Searching for gateways…"
       localCount == 0 -> "$wide"
       else -> "Local: $localCount • $wide"
     }
@@ -223,7 +221,7 @@ class BridgeDiscovery(
     val ptrMsg = lookupUnicastMessage(ptrName, Type.PTR) ?: return
     val ptrRecords = records(ptrMsg, Section.ANSWER).mapNotNull { it as? PTRRecord }
 
-    val next = LinkedHashMap<String, BridgeEndpoint>()
+    val next = LinkedHashMap<String, GatewayEndpoint>()
     for (ptr in ptrRecords) {
       val instanceFqdn = ptr.target.toString()
       val srv =
@@ -259,13 +257,12 @@ class BridgeDiscovery(
       val lanHost = txtValue(txt, "lanHost")
       val tailnetDns = txtValue(txt, "tailnetDns")
       val gatewayPort = txtIntValue(txt, "gatewayPort")
-      val bridgePort = txtIntValue(txt, "bridgePort")
       val canvasPort = txtIntValue(txt, "canvasPort")
-      val tlsEnabled = txtBoolValue(txt, "bridgeTls")
-      val tlsFingerprint = txtValue(txt, "bridgeTlsSha256")
+      val tlsEnabled = txtBoolValue(txt, "gatewayTls")
+      val tlsFingerprint = txtValue(txt, "gatewayTlsSha256")
       val id = stableId(instanceName, domain)
       next[id] =
-        BridgeEndpoint(
+        GatewayEndpoint(
           stableId = id,
           name = displayName,
           host = host,
@@ -273,7 +270,6 @@ class BridgeDiscovery(
           lanHost = lanHost,
           tailnetDns = tailnetDns,
           gatewayPort = gatewayPort,
-          bridgePort = bridgePort,
           canvasPort = canvasPort,
           tlsEnabled = tlsEnabled,
           tlsFingerprintSha256 = tlsFingerprint,

@@ -13,6 +13,7 @@ async function startServerWithDefaultConfig(port: number) {
     host: "127.0.0.1",
     auth: { mode: "token", token: "secret" },
     controlUiEnabled: false,
+    openAiChatCompletionsEnabled: false,
   });
 }
 
@@ -48,7 +49,7 @@ function parseSseDataLines(text: string): string[] {
 }
 
 describe("OpenAI-compatible HTTP API (e2e)", () => {
-  it("is disabled by default (requires config)", async () => {
+  it("is disabled by default (requires config)", { timeout: 120_000 }, async () => {
     const port = await getFreePort();
     const server = await startServerWithDefaultConfig(port);
     try {

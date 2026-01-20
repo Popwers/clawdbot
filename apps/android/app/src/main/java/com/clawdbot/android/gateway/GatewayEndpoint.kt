@@ -1,6 +1,6 @@
-package com.clawdbot.android.bridge
+package com.clawdbot.android.gateway
 
-data class BridgeEndpoint(
+data class GatewayEndpoint(
   val stableId: String,
   val name: String,
   val host: String,
@@ -8,15 +8,14 @@ data class BridgeEndpoint(
   val lanHost: String? = null,
   val tailnetDns: String? = null,
   val gatewayPort: Int? = null,
-  val bridgePort: Int? = null,
   val canvasPort: Int? = null,
   val tlsEnabled: Boolean = false,
   val tlsFingerprintSha256: String? = null,
 ) {
   companion object {
-    fun manual(host: String, port: Int): BridgeEndpoint =
-      BridgeEndpoint(
-        stableId = "manual|$host|$port",
+    fun manual(host: String, port: Int): GatewayEndpoint =
+      GatewayEndpoint(
+        stableId = "manual|${host.lowercase()}|$port",
         name = "$host:$port",
         host = host,
         port = port,

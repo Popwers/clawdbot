@@ -36,6 +36,16 @@ Minimal config:
 - Deterministic routing: replies always go back to Signal.
 - DMs share the agent's main session; groups are isolated (`agent:<agentId>:signal:group:<groupId>`).
 
+## Config writes
+By default, Signal is allowed to write config updates triggered by `/config set|unset` (requires `commands.config: true`).
+
+Disable with:
+```json5
+{
+  channels: { signal: { configWrites: false } }
+}
+```
+
 ## The number model (important)
 - The gateway connects to a **Signal device** (the `signal-cli` account).
 - If you run the bot on **your personal Signal account**, it will ignore your own messages (loop protection).
@@ -110,10 +120,11 @@ Provider options:
 - `channels.signal.ignoreStories`: ignore stories from the daemon.
 - `channels.signal.sendReadReceipts`: forward read receipts.
 - `channels.signal.dmPolicy`: `pairing | allowlist | open | disabled` (default: pairing).
-- `channels.signal.allowFrom`: DM allowlist (E.164 or `uuid:<id>`). `open` requires `"*"`.
+- `channels.signal.allowFrom`: DM allowlist (E.164 or `uuid:<id>`). `open` requires `"*"`. Signal has no usernames; use phone/UUID ids.
 - `channels.signal.groupPolicy`: `open | allowlist | disabled` (default: allowlist).
 - `channels.signal.groupAllowFrom`: group sender allowlist.
 - `channels.signal.historyLimit`: max group messages to include as context (0 disables).
+- `channels.signal.dmHistoryLimit`: DM history limit in user turns. Per-user overrides: `channels.signal.dms["<phone_or_uuid>"].historyLimit`.
 - `channels.signal.textChunkLimit`: outbound chunk size (chars).
 - `channels.signal.mediaMaxMb`: inbound/outbound media cap (MB).
 

@@ -6,15 +6,12 @@ import {
   text as clackText,
 } from "@clack/prompts";
 
-import {
-  stylePromptHint,
-  stylePromptMessage,
-  stylePromptTitle,
-} from "../terminal/prompt-style.js";
+import { stylePromptHint, stylePromptMessage, stylePromptTitle } from "../terminal/prompt-style.js";
 
 export const CONFIGURE_WIZARD_SECTIONS = [
   "workspace",
   "model",
+  "web",
   "gateway",
   "daemon",
   "channels",
@@ -38,6 +35,7 @@ export const CONFIGURE_SECTION_OPTIONS: Array<{
 }> = [
   { value: "workspace", label: "Workspace", hint: "Set workspace + sessions" },
   { value: "model", label: "Model", hint: "Pick provider + credentials" },
+  { value: "web", label: "Web tools", hint: "Configure Brave search + fetch" },
   { value: "gateway", label: "Gateway", hint: "Port, bind, auth, tailscale" },
   {
     value: "daemon",
@@ -57,10 +55,8 @@ export const CONFIGURE_SECTION_OPTIONS: Array<{
   },
 ];
 
-export const intro = (message: string) =>
-  clackIntro(stylePromptTitle(message) ?? message);
-export const outro = (message: string) =>
-  clackOutro(stylePromptTitle(message) ?? message);
+export const intro = (message: string) => clackIntro(stylePromptTitle(message) ?? message);
+export const outro = (message: string) => clackOutro(stylePromptTitle(message) ?? message);
 export const text = (params: Parameters<typeof clackText>[0]) =>
   clackText({
     ...params,
@@ -76,8 +72,6 @@ export const select = <T>(params: Parameters<typeof clackSelect<T>>[0]) =>
     ...params,
     message: stylePromptMessage(params.message),
     options: params.options.map((opt) =>
-      opt.hint === undefined
-        ? opt
-        : { ...opt, hint: stylePromptHint(opt.hint) },
+      opt.hint === undefined ? opt : { ...opt, hint: stylePromptHint(opt.hint) },
     ),
   });

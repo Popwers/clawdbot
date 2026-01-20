@@ -14,8 +14,7 @@ vi.mock("../agents/pi-embedded.js", () => ({
   abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
   runEmbeddedPiAgent: vi.fn(),
   queueEmbeddedPiMessage: vi.fn().mockReturnValue(false),
-  resolveEmbeddedSessionLane: (key: string) =>
-    `session:${key.trim() || "main"}`,
+  resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
   isEmbeddedPiRunActive: vi.fn().mockReturnValue(false),
   isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),
 }));
@@ -69,7 +68,7 @@ describe("directive behavior", () => {
       const storePath = path.join(home, "sessions.json");
 
       await getReplyFromConfig(
-        { Body: "/model ki", From: "+1222", To: "+1222" },
+        { Body: "/model ki", From: "+1222", To: "+1222", CommandAuthorized: true },
         {},
         {
           agents: {
@@ -96,9 +95,7 @@ describe("directive behavior", () => {
                 baseUrl: "http://127.0.0.1:1234/v1",
                 apiKey: "lmstudio",
                 api: "openai-responses",
-                models: [
-                  { id: "kimi-k2-0905-preview", name: "Kimi K2 (Local)" },
-                ],
+                models: [{ id: "kimi-k2-0905-preview", name: "Kimi K2 (Local)" }],
               },
             },
           },
@@ -138,7 +135,7 @@ describe("directive behavior", () => {
       );
 
       const res = await getReplyFromConfig(
-        { Body: "/model Opus@anthropic:work", From: "+1222", To: "+1222" },
+        { Body: "/model Opus@anthropic:work", From: "+1222", To: "+1222", CommandAuthorized: true },
         {},
         {
           agents: {
@@ -170,7 +167,7 @@ describe("directive behavior", () => {
       const storePath = path.join(home, "sessions.json");
 
       await getReplyFromConfig(
-        { Body: "/model Opus", From: "+1222", To: "+1222" },
+        { Body: "/model Opus", From: "+1222", To: "+1222", CommandAuthorized: true },
         {},
         {
           agents: {
@@ -188,9 +185,7 @@ describe("directive behavior", () => {
       );
 
       const events = drainSystemEvents(MAIN_SESSION_KEY);
-      expect(events).toContain(
-        "Model switched to Opus (anthropic/claude-opus-4-5).",
-      );
+      expect(events).toContain("Model switched to Opus (anthropic/claude-opus-4-5).");
       expect(runEmbeddedPiAgent).not.toHaveBeenCalled();
     });
   });
@@ -205,6 +200,7 @@ describe("directive behavior", () => {
           From: "+1222",
           To: "+1222",
           Provider: "whatsapp",
+          CommandAuthorized: true,
         },
         {},
         {
@@ -235,6 +231,7 @@ describe("directive behavior", () => {
           From: "+1222",
           To: "+1222",
           Provider: "whatsapp",
+          CommandAuthorized: true,
         },
         {},
         {

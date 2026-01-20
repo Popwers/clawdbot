@@ -2,12 +2,8 @@ import type { Command } from "commander";
 import { randomIdempotencyKey } from "../../gateway/call.js";
 import { defaultRuntime } from "../../runtime.js";
 import { parseEnvPairs, parseTimeoutMs } from "../nodes-run.js";
-import {
-  callGatewayCli,
-  nodesCallOpts,
-  resolveNodeId,
-  unauthorizedHintForMessage,
-} from "./rpc.js";
+import { runNodesCommand } from "./cli-utils.js";
+import { callGatewayCli, nodesCallOpts, resolveNodeId, unauthorizedHintForMessage } from "./rpc.js";
 import type { NodesRpcOpts } from "./types.js";
 
 export function registerNodesInvokeCommands(nodes: Command) {
@@ -18,14 +14,10 @@ export function registerNodesInvokeCommands(nodes: Command) {
       .requiredOption("--node <idOrNameOrIp>", "Node id, name, or IP")
       .requiredOption("--command <command>", "Command (e.g. canvas.eval)")
       .option("--params <json>", "JSON object string for params", "{}")
-      .option(
-        "--invoke-timeout <ms>",
-        "Node invoke timeout in ms (default 15000)",
-        "15000",
-      )
+      .option("--invoke-timeout <ms>", "Node invoke timeout in ms (default 15000)", "15000")
       .option("--idempotency-key <key>", "Idempotency key (optional)")
       .action(async (opts: NodesRpcOpts) => {
-        try {
+        await runNodesCommand("invoke", async () => {
           const nodeId = await resolveNodeId(opts, String(opts.node ?? ""));
           const command = String(opts.command ?? "").trim();
           if (!nodeId || !command) {
@@ -42,24 +34,15 @@ export function registerNodesInvokeCommands(nodes: Command) {
             nodeId,
             command,
             params,
-            idempotencyKey: String(
-              opts.idempotencyKey ?? randomIdempotencyKey(),
-            ),
+            idempotencyKey: String(opts.idempotencyKey ?? randomIdempotencyKey()),
           };
           if (typeof timeoutMs === "number" && Number.isFinite(timeoutMs)) {
             invokeParams.timeoutMs = timeoutMs;
           }
 
-          const result = await callGatewayCli(
-            "node.invoke",
-            opts,
-            invokeParams,
-          );
+          const result = await callGatewayCli("node.invoke", opts, invokeParams);
           defaultRuntime.log(JSON.stringify(result, null, 2));
-        } catch (err) {
-          defaultRuntime.error(`nodes invoke failed: ${String(err)}`);
-          defaultRuntime.exit(1);
-        }
+        });
       }),
     { timeoutMs: 30_000 },
   );
@@ -77,14 +60,10 @@ export function registerNodesInvokeCommands(nodes: Command) {
       )
       .option("--command-timeout <ms>", "Command timeout (ms)")
       .option("--needs-screen-recording", "Require screen recording permission")
-      .option(
-        "--invoke-timeout <ms>",
-        "Node invoke timeout in ms (default 30000)",
-        "30000",
-      )
+      .option("--invoke-timeout <ms>", "Node invoke timeout in ms (default 30000)", "30000")
       .argument("<command...>", "Command and args")
       .action(async (command: string[], opts: NodesRpcOpts) => {
-        try {
+        await runNodesCommand("run", async () => {
           const nodeId = await resolveNodeId(opts, String(opts.node ?? ""));
           if (!Array.isArray(command) || command.length === 0) {
             throw new Error("command required");
@@ -103,19 +82,13 @@ export function registerNodesInvokeCommands(nodes: Command) {
               timeoutMs,
               needsScreenRecording: opts.needsScreenRecording === true,
             },
-            idempotencyKey: String(
-              opts.idempotencyKey ?? randomIdempotencyKey(),
-            ),
+            idempotencyKey: String(opts.idempotencyKey ?? randomIdempotencyKey()),
           };
           if (invokeTimeout !== undefined) {
             invokeParams.timeoutMs = invokeTimeout;
           }
 
-          const result = (await callGatewayCli(
-            "node.invoke",
-            opts,
-            invokeParams,
-          )) as unknown;
+          const result = (await callGatewayCli("node.invoke", opts, invokeParams)) as unknown;
           if (opts.json) {
             defaultRuntime.log(JSON.stringify(result, null, 2));
             return;
@@ -126,12 +99,9 @@ export function registerNodesInvokeCommands(nodes: Command) {
               ? (result as { payload?: Record<string, unknown> }).payload
               : undefined;
 
-          const stdout =
-            typeof payload?.stdout === "string" ? payload.stdout : "";
-          const stderr =
-            typeof payload?.stderr === "string" ? payload.stderr : "";
-          const exitCode =
-            typeof payload?.exitCode === "number" ? payload.exitCode : null;
+          const stdout = typeof payload?.stdout === "string" ? payload.stdout : "";
+          const stderr = typeof payload?.stderr === "string" ? payload.stderr : "";
+          const exitCode = typeof payload?.exitCode === "number" ? payload.exitCode : null;
           const timedOut = payload?.timedOut === true;
           const success = payload?.success === true;
 
@@ -151,12 +121,7 @@ export function registerNodesInvokeCommands(nodes: Command) {
             defaultRuntime.exit(1);
             return;
           }
-        } catch (err) {
-          defaultRuntime.error(`nodes run failed: ${String(err)}`);
-          const hint = unauthorizedHintForMessage(String(err));
-          if (hint) defaultRuntime.error(hint);
-          defaultRuntime.exit(1);
-        }
+        });
       }),
     { timeoutMs: 35_000 },
   );

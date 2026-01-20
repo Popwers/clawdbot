@@ -1,11 +1,13 @@
 ---
-summary: "Slack socket mode setup and Clawdbot config"
-read_when: "Setting up Slack or debugging Slack socket mode"
+summary: "Slack setup for socket or HTTP webhook mode"
+read_when: "Setting up Slack or debugging Slack socket/HTTP mode"
 ---
 
-# Slack (socket mode)
+# Slack
 
-## Quick setup (beginner)
+## Socket mode (default)
+
+### Quick setup (beginner)
 1) Create a Slack app and enable **Socket Mode**.
 2) Create an **App Token** (`xapp-...`) and **Bot Token** (`xoxb-...`).
 3) Set tokens for Clawdbot and start the gateway.
@@ -23,26 +25,27 @@ Minimal config:
 }
 ```
 
-## Setup
+### Setup
 1) Create a Slack app (From scratch) in https://api.channels.slack.com/apps.
 2) **Socket Mode** → toggle on. Then go to **Basic Information** → **App-Level Tokens** → **Generate Token and Scopes** with scope `connections:write`. Copy the **App Token** (`xapp-...`).
 3) **OAuth & Permissions** → add bot token scopes (use the manifest below). Click **Install to Workspace**. Copy the **Bot User OAuth Token** (`xoxb-...`).
-4) **Event Subscriptions** → enable events and subscribe to:
+4) Optional: **OAuth & Permissions** → add **User Token Scopes** (see the read-only list below). Reinstall the app and copy the **User OAuth Token** (`xoxp-...`).
+5) **Event Subscriptions** → enable events and subscribe to:
    - `message.*` (includes edits/deletes/thread broadcasts)
    - `app_mention`
    - `reaction_added`, `reaction_removed`
    - `member_joined_channel`, `member_left_channel`
    - `channel_rename`
    - `pin_added`, `pin_removed`
-5) Invite the bot to channels you want it to read.
-6) Slash Commands → create `/clawd` if you use `channels.slack.slashCommand`. If you enable native commands, add one slash command per built-in command (same names as `/help`). Native defaults to off for Slack unless you set `channels.slack.commands.native: true` (global `commands.native` is `"auto"` which leaves Slack off).
-7) App Home → enable the **Messages Tab** so users can DM the bot.
+6) Invite the bot to channels you want it to read.
+7) Slash Commands → create `/clawd` if you use `channels.slack.slashCommand`. If you enable native commands, add one slash command per built-in command (same names as `/help`). Native defaults to off for Slack unless you set `channels.slack.commands.native: true` (global `commands.native` is `"auto"` which leaves Slack off).
+8) App Home → enable the **Messages Tab** so users can DM the bot.
 
 Use the manifest below so scopes and events stay in sync.
 
 Multi-account support: use `channels.slack.accounts` with per-account tokens and optional `name`. See [`gateway/configuration`](/gateway/configuration#telegramaccounts--discordaccounts--slackaccounts--signalaccounts--imessageaccounts) for the shared pattern.
 
-## Clawdbot config (minimal)
+### Clawdbot config (minimal)
 
 Set tokens via env vars (recommended):
 - `SLACK_APP_TOKEN=xapp-...`
@@ -62,12 +65,92 @@ Or via config:
 }
 ```
 
-## History context
+### User token (optional)
+Clawdbot can use a Slack user token (`xoxp-...`) for read operations (history,
+pins, reactions, emoji, member info). By default this stays read-only: reads
+prefer the user token when present, and writes still use the bot token unless
+you explicitly opt in. Even with `userTokenReadOnly: false`, the bot token stays
+preferred for writes when it is available.
+
+User tokens are configured in the config file (no env var support). For
+multi-account, set `channels.slack.accounts.<id>.userToken`.
+
+Example with bot + app + user tokens:
+```json5
+{
+  channels: {
+    slack: {
+      enabled: true,
+      appToken: "xapp-...",
+      botToken: "xoxb-...",
+      userToken: "xoxp-..."
+    }
+  }
+}
+```
+
+Example with userTokenReadOnly explicitly set (allow user token writes):
+```json5
+{
+  channels: {
+    slack: {
+      enabled: true,
+      appToken: "xapp-...",
+      botToken: "xoxb-...",
+      userToken: "xoxp-...",
+      userTokenReadOnly: false
+    }
+  }
+}
+```
+
+#### Token usage
+- Read operations (history, reactions list, pins list, emoji list, member info,
+  search) prefer the user token when configured, otherwise the bot token.
+- Write operations (send/edit/delete messages, add/remove reactions, pin/unpin,
+  file uploads) use the bot token by default. If `userTokenReadOnly: false` and
+  no bot token is available, Clawdbot falls back to the user token.
+
+### History context
 - `channels.slack.historyLimit` (or `channels.slack.accounts.*.historyLimit`) controls how many recent channel/group messages are wrapped into the prompt.
 - Falls back to `messages.groupChat.historyLimit`. Set `0` to disable (default 50).
 
-## Manifest (optional)
-Use this Slack app manifest to create the app quickly (adjust the name/command if you want).
+## HTTP mode (Events API)
+Use HTTP webhook mode when your Gateway is reachable by Slack over HTTPS (typical for server deployments).
+HTTP mode uses the Events API + Interactivity + Slash Commands with a shared request URL.
+
+### Setup
+1) Create a Slack app and **disable Socket Mode** (optional if you only use HTTP).
+2) **Basic Information** → copy the **Signing Secret**.
+3) **OAuth & Permissions** → install the app and copy the **Bot User OAuth Token** (`xoxb-...`).
+4) **Event Subscriptions** → enable events and set the **Request URL** to your gateway webhook path (default `/slack/events`).
+5) **Interactivity & Shortcuts** → enable and set the same **Request URL**.
+6) **Slash Commands** → set the same **Request URL** for your command(s).
+
+Example request URL:
+`https://gateway-host/slack/events`
+
+### Clawdbot config (minimal)
+```json5
+{
+  channels: {
+    slack: {
+      enabled: true,
+      mode: "http",
+      botToken: "xoxb-...",
+      signingSecret: "your-signing-secret",
+      webhookPath: "/slack/events"
+    }
+  }
+}
+```
+
+Multi-account HTTP mode: set `channels.slack.accounts.<id>.mode = "http"` and provide a unique
+`webhookPath` per account so each Slack app can point to its own URL.
+
+### Manifest (optional)
+Use this Slack app manifest to create the app quickly (adjust the name/command if you want). Include the
+user scopes if you plan to configure a user token.
 
 ```json
 {
@@ -117,6 +200,21 @@ Use this Slack app manifest to create the app quickly (adjust the name/command i
         "commands",
         "files:read",
         "files:write"
+      ],
+      "user": [
+        "channels:history",
+        "channels:read",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "mpim:history",
+        "mpim:read",
+        "users:read",
+        "reactions:read",
+        "pins:read",
+        "emoji:read",
+        "search:read"
       ]
     }
   },
@@ -149,7 +247,7 @@ Slack's Conversations API is type-scoped: you only need the scopes for the
 conversation types you actually touch (channels, groups, im, mpim). See
 https://api.channels.slack.com/docs/conversations-api for the overview.
 
-### Required scopes
+### Bot token scopes (required)
 - `chat:write` (send/update/delete messages via `chat.postMessage`)
   https://api.channels.slack.com/methods/chat.postMessage
 - `im:write` (open DMs via `conversations.open` for user DMs)
@@ -170,6 +268,17 @@ https://api.channels.slack.com/docs/conversations-api for the overview.
   https://api.channels.slack.com/scopes/emoji:read
 - `files:write` (uploads via `files.uploadV2`)
   https://api.channels.slack.com/messaging/files/uploading
+
+### User token scopes (optional, read-only by default)
+Add these under **User Token Scopes** if you configure `channels.slack.userToken`.
+
+- `channels:history`, `groups:history`, `im:history`, `mpim:history`
+- `channels:read`, `groups:read`, `im:read`, `mpim:read`
+- `users:read`
+- `reactions:read`
+- `pins:read`
+- `emoji:read`
+- `search:read`
 
 ### Not needed today (but likely future)
 - `mpim:write` (only if we add group-DM open/DM start via `conversations.open`)
@@ -261,6 +370,7 @@ For fine-grained control, use these tags in agent responses:
 - DMs share the `main` session (like WhatsApp/Telegram).
 - Channels map to `agent:<agentId>:slack:channel:<channelId>` sessions.
 - Slash commands use `agent:<agentId>:slack:slash:<userId>` sessions (prefix configurable via `channels.slack.slashCommand.sessionPrefix`).
+- If Slack doesn’t provide `channel_type`, Clawdbot infers it from the channel ID prefix (`D`, `C`, `G`) and defaults to `channel` to keep session keys stable.
 - Native command registration uses `commands.native` (global default `"auto"` → Slack off) and can be overridden per-workspace with `channels.slack.commands.native`. Text commands require standalone `/...` messages and can be disabled with `commands.text: false`. Slack slash commands are managed in the Slack app and are not removed automatically. Use `commands.useAccessGroups: false` to bypass access-group checks for commands.
 - Full command list + config: [Slash commands](/tools/slash-commands)
 
@@ -268,10 +378,19 @@ For fine-grained control, use these tags in agent responses:
 - Default: `channels.slack.dm.policy="pairing"` — unknown DM senders get a pairing code (expires after 1 hour).
 - Approve via: `clawdbot pairing approve slack <code>`.
 - To allow anyone: set `channels.slack.dm.policy="open"` and `channels.slack.dm.allowFrom=["*"]`.
+- `channels.slack.dm.allowFrom` accepts user IDs, @handles, or emails (resolved at startup when tokens allow). The wizard accepts usernames and resolves them to ids during setup when tokens allow.
 
 ## Group policy
 - `channels.slack.groupPolicy` controls channel handling (`open|disabled|allowlist`).
 - `allowlist` requires channels to be listed in `channels.slack.channels`.
+ - If you only set `SLACK_BOT_TOKEN`/`SLACK_APP_TOKEN` and never create a `channels.slack` section,
+   the runtime defaults `groupPolicy` to `open`. Add `channels.slack.groupPolicy`,
+   `channels.defaults.groupPolicy`, or a channel allowlist to lock it down.
+ - The configure wizard accepts `#channel` names and resolves them to IDs when possible
+   (public + private); if multiple matches exist, it prefers the active channel.
+ - On startup, Clawdbot resolves channel/user names in allowlists to IDs (when tokens allow)
+   and logs the mapping; unresolved entries are kept as typed.
+ - To allow **no channels**, set `channels.slack.groupPolicy: "disabled"` (or keep an empty allowlist).
 
 Channel options (`channels.slack.channels.<id>` or `channels.slack.channels.<name>`):
 - `allow`: allow/deny the channel when `groupPolicy="allowlist"`.
@@ -297,6 +416,17 @@ Slack tool actions can be gated with `channels.slack.actions.*`:
 | pins | enabled | Pin/unpin/list |
 | memberInfo | enabled | Member info |
 | emojiList | enabled | Custom emoji list |
+
+## Security notes
+- Writes default to the bot token so state-changing actions stay scoped to the
+  app's bot permissions and identity.
+- Setting `userTokenReadOnly: false` allows the user token to be used for write
+  operations when a bot token is unavailable, which means actions run with the
+  installing user's access. Treat the user token as highly privileged and keep
+  action gates and allowlists tight.
+- If you enable user-token writes, make sure the user token includes the write
+  scopes you expect (`chat:write`, `reactions:write`, `pins:write`,
+  `files:write`) or those operations will fail.
 
 ## Notes
 - Mention gating is controlled via `channels.slack.channels` (set `requireMention` to `true`); `agents.list[].groupChat.mentionPatterns` (or `messages.groupChat.mentionPatterns`) also count as mentions.

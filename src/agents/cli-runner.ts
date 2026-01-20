@@ -2,17 +2,21 @@ import type { ImageContent } from "@mariozechner/pi-ai";
 import { resolveHeartbeatPrompt } from "../auto-reply/heartbeat.js";
 import type { ThinkLevel } from "../auto-reply/thinking.js";
 import type { ClawdbotConfig } from "../config/config.js";
+import { isTruthyEnvValue } from "../infra/env.js";
 import { shouldLogVerbose } from "../globals.js";
-import { createSubsystemLogger } from "../logging.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { runCommandWithTimeout } from "../process/exec.js";
 import { resolveUserPath } from "../utils.js";
+import { resolveClawdbotDocsPath } from "./docs-path.js";
 import { resolveSessionAgentIds } from "./agent-scope.js";
+import { makeBootstrapWarn, resolveBootstrapContextForRun } from "./bootstrap-files.js";
 import { resolveCliBackendConfig } from "./cli-backends.js";
 import {
   appendImagePathsToPrompt,
   buildCliArgs,
   buildSystemPrompt,
   cleanupResumeProcesses,
+  cleanupSuspendedCliProcesses,
   enqueueCliRun,
   normalizeCliModel,
   parseCliJson,
@@ -23,17 +27,8 @@ import {
   writeCliImages,
 } from "./cli-runner/helpers.js";
 import { FailoverError, resolveFailoverStatus } from "./failover-error.js";
-import {
-  buildBootstrapContextFiles,
-  classifyFailoverReason,
-  isFailoverErrorMessage,
-  resolveBootstrapMaxChars,
-} from "./pi-embedded-helpers.js";
+import { classifyFailoverReason, isFailoverErrorMessage } from "./pi-embedded-helpers.js";
 import type { EmbeddedPiRunResult } from "./pi-embedded-runner.js";
-import {
-  filterBootstrapFilesForSession,
-  loadWorkspaceBootstrapFiles,
-} from "./workspace.js";
 
 const log = createSubsystemLogger("agent/claude-cli");
 
@@ -58,10 +53,7 @@ export async function runCliAgent(params: {
   const resolvedWorkspace = resolveUserPath(params.workspaceDir);
   const workspaceDir = resolvedWorkspace;
 
-  const backendResolved = resolveCliBackendConfig(
-    params.provider,
-    params.config,
-  );
+  const backendResolved = resolveCliBackendConfig(params.provider, params.config);
   if (!backendResolved) {
     throw new Error(`Unknown CLI backend: ${params.provider}`);
   }
@@ -77,14 +69,13 @@ export async function runCliAgent(params: {
     .filter(Boolean)
     .join("\n");
 
-  const bootstrapFiles = filterBootstrapFilesForSession(
-    await loadWorkspaceBootstrapFiles(workspaceDir),
-    params.sessionKey ?? params.sessionId,
-  );
   const sessionLabel = params.sessionKey ?? params.sessionId;
-  const contextFiles = buildBootstrapContextFiles(bootstrapFiles, {
-    maxChars: resolveBootstrapMaxChars(params.config),
-    warn: (message) => log.warn(`${message} (sessionKey=${sessionLabel})`),
+  const { contextFiles } = await resolveBootstrapContextForRun({
+    workspaceDir,
+    config: params.config,
+    sessionKey: params.sessionKey,
+    sessionId: params.sessionId,
+    warn: makeBootstrapWarn({ sessionLabel, warn: (message) => log.warn(message) }),
   });
   const { defaultAgentId, sessionAgentId } = resolveSessionAgentIds({
     sessionKey: params.sessionKey,
@@ -92,10 +83,14 @@ export async function runCliAgent(params: {
   });
   const heartbeatPrompt =
     sessionAgentId === defaultAgentId
-      ? resolveHeartbeatPrompt(
-          params.config?.agents?.defaults?.heartbeat?.prompt,
-        )
+      ? resolveHeartbeatPrompt(params.config?.agents?.defaults?.heartbeat?.prompt)
       : undefined;
+  const docsPath = await resolveClawdbotDocsPath({
+    workspaceDir,
+    argv1: process.argv[1],
+    cwd: process.cwd(),
+    moduleUrl: import.meta.url,
+  });
   const systemPrompt = buildSystemPrompt({
     workspaceDir,
     config: params.config,
@@ -103,9 +98,11 @@ export async function runCliAgent(params: {
     extraSystemPrompt,
     ownerNumbers: params.ownerNumbers,
     heartbeatPrompt,
+    docsPath: docsPath ?? undefined,
     tools: [],
     contextFiles,
     modelDisplay,
+    agentId: sessionAgentId,
   });
 
   const { sessionId: cliSessionIdToSend, isNew } = resolveSessionIdToSend({
@@ -114,14 +111,12 @@ export async function runCliAgent(params: {
   });
   const useResume = Boolean(
     params.cliSessionId &&
-      cliSessionIdToSend &&
-      backend.resumeArgs &&
-      backend.resumeArgs.length > 0,
+    cliSessionIdToSend &&
+    backend.resumeArgs &&
+    backend.resumeArgs.length > 0,
   );
   const sessionIdSent = cliSessionIdToSend
-    ? useResume ||
-      Boolean(backend.sessionArg) ||
-      Boolean(backend.sessionArgs?.length)
+    ? useResume || Boolean(backend.sessionArg) || Boolean(backend.sessionArgs?.length)
       ? cliSessionIdToSend
       : undefined
     : undefined;
@@ -148,13 +143,9 @@ export async function runCliAgent(params: {
     prompt,
   });
   const stdinPayload = stdin ?? "";
-  const baseArgs = useResume
-    ? (backend.resumeArgs ?? backend.args ?? [])
-    : (backend.args ?? []);
+  const baseArgs = useResume ? (backend.resumeArgs ?? backend.args ?? []) : (backend.args ?? []);
   const resolvedArgs = useResume
-    ? baseArgs.map((entry) =>
-        entry.replaceAll("{sessionId}", cliSessionIdToSend ?? ""),
-      )
+    ? baseArgs.map((entry) => entry.replaceAll("{sessionId}", cliSessionIdToSend ?? ""))
     : baseArgs;
   const args = buildCliArgs({
     backend,
@@ -168,26 +159,21 @@ export async function runCliAgent(params: {
   });
 
   const serialize = backend.serialize ?? true;
-  const queueKey = serialize
-    ? backendResolved.id
-    : `${backendResolved.id}:${params.runId}`;
+  const queueKey = serialize ? backendResolved.id : `${backendResolved.id}:${params.runId}`;
 
   try {
     const output = await enqueueCliRun(queueKey, async () => {
       log.info(
         `cli exec: provider=${params.provider} model=${normalizedModel} promptChars=${params.prompt.length}`,
       );
-      const logOutputText = process.env.CLAWDBOT_CLAUDE_CLI_LOG_OUTPUT === "1";
+      const logOutputText = isTruthyEnvValue(process.env.CLAWDBOT_CLAUDE_CLI_LOG_OUTPUT);
       if (logOutputText) {
         const logArgs: string[] = [];
         for (let i = 0; i < args.length; i += 1) {
           const arg = args[i] ?? "";
           if (arg === backend.systemPromptArg) {
             const systemPromptValue = args[i + 1] ?? "";
-            logArgs.push(
-              arg,
-              `<systemPrompt:${systemPromptValue.length} chars>`,
-            );
+            logArgs.push(arg, `<systemPrompt:${systemPromptValue.length} chars>`);
             i += 1;
             continue;
           }
@@ -225,6 +211,8 @@ export async function runCliAgent(params: {
         return next;
       })();
 
+      // Cleanup suspended processes that have accumulated (regardless of sessionId)
+      await cleanupSuspendedCliProcesses(backend);
       if (useResume && cliSessionIdToSend) {
         await cleanupResumeProcesses(backend, cliSessionIdToSend);
       }
@@ -259,9 +247,7 @@ export async function runCliAgent(params: {
         });
       }
 
-      const outputMode = useResume
-        ? (backend.resumeOutput ?? backend.output)
-        : backend.output;
+      const outputMode = useResume ? (backend.resumeOutput ?? backend.output) : backend.output;
 
       if (outputMode === "text") {
         return { text: stdout, sessionId: undefined };
@@ -283,8 +269,7 @@ export async function runCliAgent(params: {
       meta: {
         durationMs: Date.now() - started,
         agentMeta: {
-          sessionId:
-            output.sessionId ?? sessionIdSent ?? params.sessionId ?? "",
+          sessionId: output.sessionId ?? sessionIdSent ?? params.sessionId ?? "",
           provider: params.provider,
           model: modelId,
           usage: output.usage,

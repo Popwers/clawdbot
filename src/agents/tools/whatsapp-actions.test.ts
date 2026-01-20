@@ -4,9 +4,11 @@ import type { ClawdbotConfig } from "../../config/config.js";
 import { handleWhatsAppAction } from "./whatsapp-actions.js";
 
 const sendReactionWhatsApp = vi.fn(async () => undefined);
+const sendPollWhatsApp = vi.fn(async () => ({ messageId: "poll-1", toJid: "jid-1" }));
 
 vi.mock("../../web/outbound.js", () => ({
   sendReactionWhatsApp: (...args: unknown[]) => sendReactionWhatsApp(...args),
+  sendPollWhatsApp: (...args: unknown[]) => sendPollWhatsApp(...args),
 }));
 
 const enabledConfig = {
@@ -24,17 +26,12 @@ describe("handleWhatsAppAction", () => {
       },
       enabledConfig,
     );
-    expect(sendReactionWhatsApp).toHaveBeenCalledWith(
-      "123@s.whatsapp.net",
-      "msg1",
-      "✅",
-      {
-        verbose: false,
-        fromMe: undefined,
-        participant: undefined,
-        accountId: undefined,
-      },
-    );
+    expect(sendReactionWhatsApp).toHaveBeenCalledWith("123@s.whatsapp.net", "msg1", "✅", {
+      verbose: false,
+      fromMe: undefined,
+      participant: undefined,
+      accountId: undefined,
+    });
   });
 
   it("removes reactions on empty emoji", async () => {
@@ -47,17 +44,12 @@ describe("handleWhatsAppAction", () => {
       },
       enabledConfig,
     );
-    expect(sendReactionWhatsApp).toHaveBeenCalledWith(
-      "123@s.whatsapp.net",
-      "msg1",
-      "",
-      {
-        verbose: false,
-        fromMe: undefined,
-        participant: undefined,
-        accountId: undefined,
-      },
-    );
+    expect(sendReactionWhatsApp).toHaveBeenCalledWith("123@s.whatsapp.net", "msg1", "", {
+      verbose: false,
+      fromMe: undefined,
+      participant: undefined,
+      accountId: undefined,
+    });
   });
 
   it("removes reactions when remove flag set", async () => {
@@ -71,17 +63,12 @@ describe("handleWhatsAppAction", () => {
       },
       enabledConfig,
     );
-    expect(sendReactionWhatsApp).toHaveBeenCalledWith(
-      "123@s.whatsapp.net",
-      "msg1",
-      "",
-      {
-        verbose: false,
-        fromMe: undefined,
-        participant: undefined,
-        accountId: undefined,
-      },
-    );
+    expect(sendReactionWhatsApp).toHaveBeenCalledWith("123@s.whatsapp.net", "msg1", "", {
+      verbose: false,
+      fromMe: undefined,
+      participant: undefined,
+      accountId: undefined,
+    });
   });
 
   it("passes account scope and sender flags", async () => {
@@ -97,17 +84,12 @@ describe("handleWhatsAppAction", () => {
       },
       enabledConfig,
     );
-    expect(sendReactionWhatsApp).toHaveBeenCalledWith(
-      "123@s.whatsapp.net",
-      "msg1",
-      "🎉",
-      {
-        verbose: false,
-        fromMe: true,
-        participant: "999@s.whatsapp.net",
-        accountId: "work",
-      },
-    );
+    expect(sendReactionWhatsApp).toHaveBeenCalledWith("123@s.whatsapp.net", "msg1", "🎉", {
+      verbose: false,
+      fromMe: true,
+      participant: "999@s.whatsapp.net",
+      accountId: "work",
+    });
   });
 
   it("respects reaction gating", async () => {

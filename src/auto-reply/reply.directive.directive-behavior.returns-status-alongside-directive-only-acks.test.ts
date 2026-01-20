@@ -12,8 +12,7 @@ vi.mock("../agents/pi-embedded.js", () => ({
   abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
   runEmbeddedPiAgent: vi.fn(),
   queueEmbeddedPiMessage: vi.fn().mockReturnValue(false),
-  resolveEmbeddedSessionLane: (key: string) =>
-    `session:${key.trim() || "main"}`,
+  resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
   isEmbeddedPiRunActive: vi.fn().mockReturnValue(false),
   isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),
 }));
@@ -73,6 +72,7 @@ describe("directive behavior", () => {
           To: "+1222",
           Provider: "whatsapp",
           SenderE164: "+1222",
+          CommandAuthorized: true,
         },
         {},
         {
@@ -95,9 +95,7 @@ describe("directive behavior", () => {
       const text = Array.isArray(res) ? res[0]?.text : res?.text;
       expect(text).toContain("Elevated mode disabled.");
       expect(text).toContain("Session: agent:main:main");
-      const optionsLine = text
-        ?.split("\n")
-        .find((line) => line.trim().startsWith("⚙️"));
+      const optionsLine = text?.split("\n").find((line) => line.trim().startsWith("⚙️"));
       expect(optionsLine).toBeTruthy();
       expect(optionsLine).not.toContain("elevated");
 
@@ -118,6 +116,7 @@ describe("directive behavior", () => {
           Provider: "whatsapp",
           SenderE164: "+1222",
           SessionKey: "agent:restricted:main",
+          CommandAuthorized: true,
         },
         {},
         {
@@ -156,7 +155,7 @@ describe("directive behavior", () => {
       const storePath = path.join(home, "sessions.json");
 
       const res = await getReplyFromConfig(
-        { Body: "/queue interrupt", From: "+1222", To: "+1222" },
+        { Body: "/queue interrupt", From: "+1222", To: "+1222", CommandAuthorized: true },
         {},
         {
           agents: {
@@ -188,6 +187,7 @@ describe("directive behavior", () => {
           Body: "/queue collect debounce:2s cap:5 drop:old",
           From: "+1222",
           To: "+1222",
+          CommandAuthorized: true,
         },
         {},
         {
@@ -222,7 +222,7 @@ describe("directive behavior", () => {
       const storePath = path.join(home, "sessions.json");
 
       await getReplyFromConfig(
-        { Body: "/queue interrupt", From: "+1222", To: "+1222" },
+        { Body: "/queue interrupt", From: "+1222", To: "+1222", CommandAuthorized: true },
         {},
         {
           agents: {
@@ -237,7 +237,7 @@ describe("directive behavior", () => {
       );
 
       const res = await getReplyFromConfig(
-        { Body: "/queue reset", From: "+1222", To: "+1222" },
+        { Body: "/queue reset", From: "+1222", To: "+1222", CommandAuthorized: true },
         {},
         {
           agents: {

@@ -118,9 +118,7 @@ export function applyLoggingDefaults(cfg: ClawdbotConfig): ClawdbotConfig {
   };
 }
 
-export function applyContextPruningDefaults(
-  cfg: ClawdbotConfig,
-): ClawdbotConfig {
+export function applyContextPruningDefaults(cfg: ClawdbotConfig): ClawdbotConfig {
   const defaults = cfg.agents?.defaults;
   if (!defaults) return cfg;
   const contextPruning = defaults?.contextPruning;
@@ -135,6 +133,27 @@ export function applyContextPruningDefaults(
         contextPruning: {
           ...contextPruning,
           mode: "adaptive",
+        },
+      },
+    },
+  };
+}
+
+export function applyCompactionDefaults(cfg: ClawdbotConfig): ClawdbotConfig {
+  const defaults = cfg.agents?.defaults;
+  if (!defaults) return cfg;
+  const compaction = defaults?.compaction;
+  if (compaction?.mode) return cfg;
+
+  return {
+    ...cfg,
+    agents: {
+      ...cfg.agents,
+      defaults: {
+        ...defaults,
+        compaction: {
+          ...compaction,
+          mode: "safeguard",
         },
       },
     },

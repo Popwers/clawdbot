@@ -27,18 +27,10 @@ import type {
   SkillStatusReport,
   StatusSummary,
 } from "./types";
-import type {
-  ChatQueueItem,
-  CronFormState,
-  DiscordForm,
-  IMessageForm,
-  SlackForm,
-  SignalForm,
-  TelegramForm,
-} from "./ui-types";
+import type { ChatQueueItem, CronFormState } from "./ui-types";
 import { renderChat } from "./views/chat";
 import { renderConfig } from "./views/config";
-import { renderConnections } from "./views/connections";
+import { renderChannels } from "./views/channels";
 import { renderCron } from "./views/cron";
 import { renderDebug } from "./views/debug";
 import { renderInstances } from "./views/instances";
@@ -48,16 +40,9 @@ import { renderOverview } from "./views/overview";
 import { renderSessions } from "./views/sessions";
 import { renderSkills } from "./views/skills";
 import { renderChatControls, renderTab, renderThemeToggle } from "./app-render.helpers";
-import {
-  loadChannels,
-  updateDiscordForm,
-  updateIMessageForm,
-  updateSlackForm,
-  updateSignalForm,
-  updateTelegramForm,
-} from "./controllers/connections";
+import { loadChannels } from "./controllers/channels";
 import { loadPresence } from "./controllers/presence";
-import { loadSessions, patchSession } from "./controllers/sessions";
+import { deleteSession, loadSessions, patchSession } from "./controllers/sessions";
 import {
   installSkill,
   loadSkills,
@@ -74,7 +59,14 @@ import {
   runUpdate,
   saveConfig,
   updateConfigFormValue,
+  removeConfigFormValue,
 } from "./controllers/config";
+import {
+  loadExecApprovals,
+  removeExecApprovalsFormValue,
+  saveExecApprovals,
+  updateExecApprovalsFormValue,
+} from "./controllers/exec-approvals";
 import { loadCronRuns, toggleCronJob, runCronJob, removeCronJob, addCronJob } from "./controllers/cron";
 import { loadDebug, callDebugMethod } from "./controllers/debug";
 import { loadLogs } from "./controllers/logs";
@@ -144,6 +136,23 @@ export function renderApp(state: AppViewState) {
             </div>
           `;
         })}
+        <div class="nav-group nav-group--links">
+          <div class="nav-label nav-label--static">
+            <span class="nav-label__text">Resources</span>
+          </div>
+          <div class="nav-group__items">
+            <a
+              class="nav-item nav-item--external"
+              href="https://docs.clawd.bot"
+              target="_blank"
+              rel="noreferrer"
+              title="Docs (opens in new tab)"
+            >
+              <span class="nav-item__icon" aria-hidden="true">📚</span>
+              <span class="nav-item__text">Docs</span>
+            </a>
+          </div>
+        </div>
       </aside>
       <main class="content ${isChat ? "content--chat" : ""}">
         <section class="content-header">
@@ -188,8 +197,8 @@ export function renderApp(state: AppViewState) {
             })
           : nothing}
 
-        ${state.tab === "connections"
-          ? renderConnections({
+        ${state.tab === "channels"
+          ? renderChannels({
               connected: state.connected,
               loading: state.channelsLoading,
               snapshot: state.channelsSnapshot,
@@ -199,39 +208,19 @@ export function renderApp(state: AppViewState) {
               whatsappQrDataUrl: state.whatsappLoginQrDataUrl,
               whatsappConnected: state.whatsappLoginConnected,
               whatsappBusy: state.whatsappBusy,
-              telegramForm: state.telegramForm,
-              telegramTokenLocked: state.telegramTokenLocked,
-              telegramSaving: state.telegramSaving,
-              telegramStatus: state.telegramConfigStatus,
-              discordForm: state.discordForm,
-              discordTokenLocked: state.discordTokenLocked,
-              discordSaving: state.discordSaving,
-              discordStatus: state.discordConfigStatus,
-              slackForm: state.slackForm,
-              slackTokenLocked: state.slackTokenLocked,
-              slackAppTokenLocked: state.slackAppTokenLocked,
-              slackSaving: state.slackSaving,
-              slackStatus: state.slackConfigStatus,
-              signalForm: state.signalForm,
-              signalSaving: state.signalSaving,
-              signalStatus: state.signalConfigStatus,
-              imessageForm: state.imessageForm,
-              imessageSaving: state.imessageSaving,
-              imessageStatus: state.imessageConfigStatus,
+              configSchema: state.configSchema,
+              configSchemaLoading: state.configSchemaLoading,
+              configForm: state.configForm,
+              configUiHints: state.configUiHints,
+              configSaving: state.configSaving,
+              configFormDirty: state.configFormDirty,
               onRefresh: (probe) => loadChannels(state, probe),
               onWhatsAppStart: (force) => state.handleWhatsAppStart(force),
               onWhatsAppWait: () => state.handleWhatsAppWait(),
               onWhatsAppLogout: () => state.handleWhatsAppLogout(),
-              onTelegramChange: (patch) => updateTelegramForm(state, patch),
-              onTelegramSave: () => state.handleTelegramSave(),
-              onDiscordChange: (patch) => updateDiscordForm(state, patch),
-              onDiscordSave: () => state.handleDiscordSave(),
-              onSlackChange: (patch) => updateSlackForm(state, patch),
-              onSlackSave: () => state.handleSlackSave(),
-              onSignalChange: (patch) => updateSignalForm(state, patch),
-              onSignalSave: () => state.handleSignalSave(),
-              onIMessageChange: (patch) => updateIMessageForm(state, patch),
-              onIMessageSave: () => state.handleIMessageSave(),
+              onConfigPatch: (path, value) => updateConfigFormValue(state, path, value),
+              onConfigSave: () => state.handleChannelConfigSave(),
+              onConfigReload: () => state.handleChannelConfigReload(),
             })
           : nothing}
 
@@ -260,11 +249,12 @@ export function renderApp(state: AppViewState) {
                 state.sessionsFilterLimit = next.limit;
                 state.sessionsIncludeGlobal = next.includeGlobal;
                 state.sessionsIncludeUnknown = next.includeUnknown;
-              },
-              onRefresh: () => loadSessions(state),
-              onPatch: (key, patch) => patchSession(state, key, patch),
-            })
-          : nothing}
+	              },
+	              onRefresh: () => loadSessions(state),
+	              onPatch: (key, patch) => patchSession(state, key, patch),
+	              onDelete: (key) => deleteSession(state, key),
+	            })
+	          : nothing}
 
         ${state.tab === "cron"
           ? renderCron({
@@ -309,7 +299,66 @@ export function renderApp(state: AppViewState) {
           ? renderNodes({
               loading: state.nodesLoading,
               nodes: state.nodes,
+              configForm: state.configForm ?? (state.configSnapshot?.config as Record<string, unknown> | null),
+              configLoading: state.configLoading,
+              configSaving: state.configSaving,
+              configDirty: state.configFormDirty,
+              configFormMode: state.configFormMode,
+              execApprovalsLoading: state.execApprovalsLoading,
+              execApprovalsSaving: state.execApprovalsSaving,
+              execApprovalsDirty: state.execApprovalsDirty,
+              execApprovalsSnapshot: state.execApprovalsSnapshot,
+              execApprovalsForm: state.execApprovalsForm,
+              execApprovalsSelectedAgent: state.execApprovalsSelectedAgent,
+              execApprovalsTarget: state.execApprovalsTarget,
+              execApprovalsTargetNodeId: state.execApprovalsTargetNodeId,
               onRefresh: () => loadNodes(state),
+              onLoadConfig: () => loadConfig(state),
+              onLoadExecApprovals: () => {
+                const target =
+                  state.execApprovalsTarget === "node" && state.execApprovalsTargetNodeId
+                    ? { kind: "node" as const, nodeId: state.execApprovalsTargetNodeId }
+                    : { kind: "gateway" as const };
+                return loadExecApprovals(state, target);
+              },
+              onBindDefault: (nodeId) => {
+                if (nodeId) {
+                  updateConfigFormValue(state, ["tools", "exec", "node"], nodeId);
+                } else {
+                  removeConfigFormValue(state, ["tools", "exec", "node"]);
+                }
+              },
+              onBindAgent: (agentIndex, nodeId) => {
+                const basePath = ["agents", "list", agentIndex, "tools", "exec", "node"];
+                if (nodeId) {
+                  updateConfigFormValue(state, basePath, nodeId);
+                } else {
+                  removeConfigFormValue(state, basePath);
+                }
+              },
+              onSaveBindings: () => saveConfig(state),
+              onExecApprovalsTargetChange: (kind, nodeId) => {
+                state.execApprovalsTarget = kind;
+                state.execApprovalsTargetNodeId = nodeId;
+                state.execApprovalsSnapshot = null;
+                state.execApprovalsForm = null;
+                state.execApprovalsDirty = false;
+                state.execApprovalsSelectedAgent = null;
+              },
+              onExecApprovalsSelectAgent: (agentId) => {
+                state.execApprovalsSelectedAgent = agentId;
+              },
+              onExecApprovalsPatch: (path, value) =>
+                updateExecApprovalsFormValue(state, path, value),
+              onExecApprovalsRemove: (path) =>
+                removeExecApprovalsFormValue(state, path),
+              onSaveExecApprovals: () => {
+                const target =
+                  state.execApprovalsTarget === "node" && state.execApprovalsTargetNodeId
+                    ? { kind: "node" as const, nodeId: state.execApprovalsTargetNodeId }
+                    : { kind: "gateway" as const };
+                return saveExecApprovals(state, target);
+              },
             })
           : nothing}
 
@@ -449,14 +498,6 @@ export function renderApp(state: AppViewState) {
             })
           : nothing}
       </main>
-      <a
-        class="docs-link"
-        href="https://docs.clawd.bot"
-        target="_blank"
-        rel="noreferrer"
-      >
-        Docs
-      </a>
     </div>
   `;
 }

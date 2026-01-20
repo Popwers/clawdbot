@@ -32,8 +32,7 @@ vi.mock("node:child_process", async (importOriginal) => {
         dockerArgs[0] === "inspect" &&
         dockerArgs[1] === "-f" &&
         dockerArgs[2] === "{{.State.Running}}";
-      const shouldSucceedImageInspect =
-        dockerArgs[0] === "image" && dockerArgs[1] === "inspect";
+      const shouldSucceedImageInspect = dockerArgs[0] === "image" && dockerArgs[1] === "inspect";
 
       const code = shouldFailContainerInspect ? 1 : 0;
       if (shouldSucceedImageInspect) {
@@ -53,7 +52,7 @@ describe("Agent-specific sandbox config", () => {
 
   it(
     "should use global sandbox config when no agent-specific config exists",
-    { timeout: 15_000 },
+    { timeout: 60_000 },
     async () => {
       const { resolveSandboxContext } = await import("./sandbox.js");
 

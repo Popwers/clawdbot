@@ -13,10 +13,7 @@ function getSessionRecipients(cfg: ClawdbotConfig) {
   const storePath = resolveStorePath(cfg.session?.store);
   const store = loadSessionStore(storePath);
   const isGroupKey = (key: string) =>
-    key.startsWith("group:") ||
-    key.includes(":group:") ||
-    key.includes(":channel:") ||
-    key.includes("@g.us");
+    key.includes(":group:") || key.includes(":channel:") || key.includes("@g.us");
   const isCronKey = (key: string) => key.startsWith("cron:");
 
   const recipients = Object.entries(store)
@@ -24,8 +21,7 @@ function getSessionRecipients(cfg: ClawdbotConfig) {
     .filter(([key]) => !isGroupKey(key) && !isCronKey(key))
     .map(([_, entry]) => ({
       to:
-        normalizeChatChannelId(entry?.lastChannel) === "whatsapp" &&
-        entry?.lastTo
+        normalizeChatChannelId(entry?.lastChannel) === "whatsapp" && entry?.lastTo
           ? normalizeE164(entry.lastTo)
           : "",
       updatedAt: entry?.updatedAt ?? 0,
@@ -52,11 +48,8 @@ export function resolveWhatsAppHeartbeatRecipients(
 
   const sessionRecipients = getSessionRecipients(cfg);
   const allowFrom =
-    Array.isArray(cfg.channels?.whatsapp?.allowFrom) &&
-    cfg.channels.whatsapp.allowFrom.length > 0
-      ? cfg.channels.whatsapp.allowFrom
-          .filter((v) => v !== "*")
-          .map(normalizeE164)
+    Array.isArray(cfg.channels?.whatsapp?.allowFrom) && cfg.channels.whatsapp.allowFrom.length > 0
+      ? cfg.channels.whatsapp.allowFrom.filter((v) => v !== "*").map(normalizeE164)
       : [];
 
   const unique = (list: string[]) => [...new Set(list.filter(Boolean))];

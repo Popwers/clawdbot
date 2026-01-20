@@ -1,3 +1,4 @@
+import os from "node:os";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -51,6 +52,7 @@ export type UpdateStepProgress = {
 type UpdateRunnerOptions = {
   cwd?: string;
   argv1?: string;
+  tag?: string;
   timeoutMs?: number;
   runCommand?: CommandRunner;
   progress?: UpdateStepProgress;
@@ -110,12 +112,9 @@ async function resolveGitRoot(
   timeoutMs: number,
 ): Promise<string | null> {
   for (const dir of candidates) {
-    const res = await runCommand(
-      ["git", "-C", dir, "rev-parse", "--show-toplevel"],
-      {
-        timeoutMs,
-      },
-    );
+    const res = await runCommand(["git", "-C", dir, "rev-parse", "--show-toplevel"], {
+      timeoutMs,
+    });
     if (res.code === 0) {
       const root = res.stdout.trim();
       if (root) return root;
@@ -161,6 +160,52 @@ async function detectPackageManager(root: string) {
   return "npm";
 }
 
+async function tryRealpath(value: string): Promise<string> {
+  try {
+    return await fs.realpath(value);
+  } catch {
+    return path.resolve(value);
+  }
+}
+
+async function detectGlobalInstallManager(
+  runCommand: CommandRunner,
+  pkgRoot: string,
+  timeoutMs: number,
+): Promise<"npm" | "pnpm" | "bun" | null> {
+  const pkgReal = await tryRealpath(pkgRoot);
+
+  const candidates: Array<{
+    manager: "npm" | "pnpm";
+    argv: string[];
+  }> = [
+    { manager: "npm", argv: ["npm", "root", "-g"] },
+    { manager: "pnpm", argv: ["pnpm", "root", "-g"] },
+  ];
+
+  for (const { manager, argv } of candidates) {
+    const res = await runCommand(argv, { timeoutMs }).catch(() => null);
+    if (!res) continue;
+    if (res.code !== 0) continue;
+    const globalRoot = res.stdout.trim();
+    if (!globalRoot) continue;
+
+    const globalReal = await tryRealpath(globalRoot);
+    const expected = path.join(globalReal, "clawdbot");
+    if (path.resolve(expected) === path.resolve(pkgReal)) return manager;
+  }
+
+  // Bun doesn't have an officially stable "global root" command across versions,
+  // so we check the common global install path (best-effort).
+  const bunInstall = process.env.BUN_INSTALL?.trim() || path.join(os.homedir(), ".bun");
+  const bunGlobalRoot = path.join(bunInstall, "install", "global", "node_modules");
+  const bunGlobalReal = await tryRealpath(bunGlobalRoot);
+  const bunExpected = path.join(bunGlobalReal, "clawdbot");
+  if (path.resolve(bunExpected) === path.resolve(pkgReal)) return "bun";
+
+  return null;
+}
+
 type RunStepOptions = {
   runCommand: CommandRunner;
   name: string;
@@ -174,17 +219,7 @@ type RunStepOptions = {
 };
 
 async function runStep(opts: RunStepOptions): Promise<UpdateStepResult> {
-  const {
-    runCommand,
-    name,
-    argv,
-    cwd,
-    timeoutMs,
-    env,
-    progress,
-    stepIndex,
-    totalSteps,
-  } = opts;
+  const { runCommand, name, argv, cwd, timeoutMs, env, progress, stepIndex, totalSteps } = opts;
   const command = argv.join(" ");
 
   const stepInfo: UpdateStepInfo = {
@@ -220,11 +255,7 @@ async function runStep(opts: RunStepOptions): Promise<UpdateStepResult> {
   };
 }
 
-function managerScriptArgs(
-  manager: "pnpm" | "bun" | "npm",
-  script: string,
-  args: string[] = [],
-) {
+function managerScriptArgs(manager: "pnpm" | "bun" | "npm", script: string, args: string[] = []) {
   if (manager === "pnpm") return ["pnpm", script, ...args];
   if (manager === "bun") return ["bun", "run", script, ...args];
   if (args.length > 0) return ["npm", "run", script, "--", ...args];
@@ -237,12 +268,23 @@ function managerInstallArgs(manager: "pnpm" | "bun" | "npm") {
   return ["npm", "install"];
 }
 
+function normalizeTag(tag?: string) {
+  const trimmed = tag?.trim();
+  if (!trimmed) return "latest";
+  return trimmed.startsWith("clawdbot@") ? trimmed.slice("clawdbot@".length) : trimmed;
+}
+
+function globalUpdateArgs(manager: "pnpm" | "npm" | "bun", tag?: string) {
+  const spec = `clawdbot@${normalizeTag(tag)}`;
+  if (manager === "pnpm") return ["pnpm", "add", "-g", spec];
+  if (manager === "bun") return ["bun", "add", "-g", spec];
+  return ["npm", "i", "-g", spec];
+}
+
 // Total number of visible steps in a successful git update flow
 const GIT_UPDATE_TOTAL_STEPS = 9;
 
-export async function runGatewayUpdate(
-  opts: UpdateRunnerOptions = {},
-): Promise<UpdateRunResult> {
+export async function runGatewayUpdate(opts: UpdateRunnerOptions = {}): Promise<UpdateRunResult> {
   const startedAt = Date.now();
   const runCommand =
     opts.runCommand ??
@@ -298,19 +340,15 @@ export async function runGatewayUpdate(
 
   if (gitRoot && pkgRoot && path.resolve(gitRoot) === path.resolve(pkgRoot)) {
     // Get current SHA (not a visible step, no progress)
-    const beforeShaResult = await runCommand(
-      ["git", "-C", gitRoot, "rev-parse", "HEAD"],
-      { cwd: gitRoot, timeoutMs },
-    );
+    const beforeShaResult = await runCommand(["git", "-C", gitRoot, "rev-parse", "HEAD"], {
+      cwd: gitRoot,
+      timeoutMs,
+    });
     const beforeSha = beforeShaResult.stdout.trim() || null;
     const beforeVersion = await readPackageVersion(gitRoot);
 
     const statusCheck = await runStep(
-      step(
-        "clean check",
-        ["git", "-C", gitRoot, "status", "--porcelain"],
-        gitRoot,
-      ),
+      step("clean check", ["git", "-C", gitRoot, "status", "--porcelain"], gitRoot),
     );
     steps.push(statusCheck);
     const hasUncommittedChanges =
@@ -330,15 +368,7 @@ export async function runGatewayUpdate(
     const upstreamStep = await runStep(
       step(
         "upstream check",
-        [
-          "git",
-          "-C",
-          gitRoot,
-          "rev-parse",
-          "--abbrev-ref",
-          "--symbolic-full-name",
-          "@{upstream}",
-        ],
+        ["git", "-C", gitRoot, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
         gitRoot,
       ),
     );
@@ -356,27 +386,19 @@ export async function runGatewayUpdate(
     }
 
     const fetchStep = await runStep(
-      step(
-        "git fetch",
-        ["git", "-C", gitRoot, "fetch", "--all", "--prune"],
-        gitRoot,
-      ),
+      step("git fetch", ["git", "-C", gitRoot, "fetch", "--all", "--prune"], gitRoot),
     );
     steps.push(fetchStep);
 
     const rebaseStep = await runStep(
-      step(
-        "git rebase",
-        ["git", "-C", gitRoot, "rebase", "@{upstream}"],
-        gitRoot,
-      ),
+      step("git rebase", ["git", "-C", gitRoot, "rebase", "@{upstream}"], gitRoot),
     );
     steps.push(rebaseStep);
     if (rebaseStep.exitCode !== 0) {
-      const abortResult = await runCommand(
-        ["git", "-C", gitRoot, "rebase", "--abort"],
-        { cwd: gitRoot, timeoutMs },
-      );
+      const abortResult = await runCommand(["git", "-C", gitRoot, "rebase", "--abort"], {
+        cwd: gitRoot,
+        timeoutMs,
+      });
       steps.push({
         name: "git rebase --abort",
         command: "git rebase --abort",
@@ -399,14 +421,10 @@ export async function runGatewayUpdate(
 
     const manager = await detectPackageManager(gitRoot);
 
-    const depsStep = await runStep(
-      step("deps install", managerInstallArgs(manager), gitRoot),
-    );
+    const depsStep = await runStep(step("deps install", managerInstallArgs(manager), gitRoot));
     steps.push(depsStep);
 
-    const buildStep = await runStep(
-      step("build", managerScriptArgs(manager, "build"), gitRoot),
-    );
+    const buildStep = await runStep(step("build", managerScriptArgs(manager, "build"), gitRoot));
     steps.push(buildStep);
 
     const uiBuildStep = await runStep(
@@ -426,11 +444,7 @@ export async function runGatewayUpdate(
 
     const failedStep = steps.find((s) => s.exitCode !== 0);
     const afterShaStep = await runStep(
-      step(
-        "git rev-parse HEAD (after)",
-        ["git", "-C", gitRoot, "rev-parse", "HEAD"],
-        gitRoot,
-      ),
+      step("git rev-parse HEAD (after)", ["git", "-C", gitRoot, "rev-parse", "HEAD"], gitRoot),
     );
     steps.push(afterShaStep);
     const afterVersion = await readPackageVersion(gitRoot);
@@ -461,6 +475,32 @@ export async function runGatewayUpdate(
   }
 
   const beforeVersion = await readPackageVersion(pkgRoot);
+  const globalManager = await detectGlobalInstallManager(runCommand, pkgRoot, timeoutMs);
+  if (globalManager) {
+    const updateStep = await runStep({
+      runCommand,
+      name: "global update",
+      argv: globalUpdateArgs(globalManager, opts.tag),
+      cwd: pkgRoot,
+      timeoutMs,
+      progress,
+      stepIndex: 0,
+      totalSteps: 1,
+    });
+    const steps = [updateStep];
+    const afterVersion = await readPackageVersion(pkgRoot);
+    return {
+      status: updateStep.exitCode === 0 ? "ok" : "error",
+      mode: globalManager,
+      root: pkgRoot,
+      reason: updateStep.exitCode === 0 ? undefined : updateStep.name,
+      before: { version: beforeVersion },
+      after: { version: afterVersion },
+      steps,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
   return {
     status: "skipped",
     mode: "unknown",

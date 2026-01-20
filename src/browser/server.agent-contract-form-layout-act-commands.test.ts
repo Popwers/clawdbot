@@ -106,20 +106,18 @@ const launchCalls = vi.hoisted(() => [] as Array<{ port: number }>);
 vi.mock("./chrome.js", () => ({
   isChromeCdpReady: vi.fn(async () => reachable),
   isChromeReachable: vi.fn(async () => reachable),
-  launchClawdChrome: vi.fn(
-    async (_resolved: unknown, profile: { cdpPort: number }) => {
-      launchCalls.push({ port: profile.cdpPort });
-      reachable = true;
-      return {
-        pid: 123,
-        exe: { kind: "chrome", path: "/fake/chrome" },
-        userDataDir: "/tmp/clawd",
-        cdpPort: profile.cdpPort,
-        startedAt: Date.now(),
-        proc,
-      };
-    },
-  ),
+  launchClawdChrome: vi.fn(async (_resolved: unknown, profile: { cdpPort: number }) => {
+    launchCalls.push({ port: profile.cdpPort });
+    reachable = true;
+    return {
+      pid: 123,
+      exe: { kind: "chrome", path: "/fake/chrome" },
+      userDataDir: "/tmp/clawd",
+      cdpPort: profile.cdpPort,
+      startedAt: Date.now(),
+      proc,
+    };
+  }),
   resolveClawdUserDataDir: vi.fn(() => "/tmp/clawd"),
   stopClawdChrome: vi.fn(async () => {
     reachable = false;
@@ -130,6 +128,12 @@ vi.mock("./cdp.js", () => ({
   createTargetViaCdp: cdpMocks.createTargetViaCdp,
   normalizeCdpWsUrl: vi.fn((wsUrl: string) => wsUrl),
   snapshotAria: cdpMocks.snapshotAria,
+  getHeadersWithAuth: vi.fn(() => ({})),
+  appendCdpPath: vi.fn((cdpUrl: string, path: string) => {
+    const base = cdpUrl.replace(/\/$/, "");
+    const suffix = path.startsWith("/") ? path : `/${path}`;
+    return `${base}${suffix}`;
+  }),
 }));
 
 vi.mock("./pw-ai.js", () => pwMocks);
@@ -265,72 +269,78 @@ describe("browser control server", () => {
     return (await res.json()) as T;
   };
 
-  it("agent contract: form + layout act commands", async () => {
-    const base = await startServerAndBase();
+  const slowTimeoutMs = process.platform === "win32" ? 40_000 : 20_000;
 
-    const select = (await postJson(`${base}/act`, {
-      kind: "select",
-      ref: "5",
-      values: ["a", "b"],
-    })) as { ok: boolean };
-    expect(select.ok).toBe(true);
-    expect(pwMocks.selectOptionViaPlaywright).toHaveBeenCalledWith({
-      cdpUrl: cdpBaseUrl,
-      targetId: "abcd1234",
-      ref: "5",
-      values: ["a", "b"],
-    });
+  it(
+    "agent contract: form + layout act commands",
+    async () => {
+      const base = await startServerAndBase();
 
-    const fill = (await postJson(`${base}/act`, {
-      kind: "fill",
-      fields: [{ ref: "6", type: "textbox", value: "hello" }],
-    })) as { ok: boolean };
-    expect(fill.ok).toBe(true);
-    expect(pwMocks.fillFormViaPlaywright).toHaveBeenCalledWith({
-      cdpUrl: cdpBaseUrl,
-      targetId: "abcd1234",
-      fields: [{ ref: "6", type: "textbox", value: "hello" }],
-    });
+      const select = (await postJson(`${base}/act`, {
+        kind: "select",
+        ref: "5",
+        values: ["a", "b"],
+      })) as { ok: boolean };
+      expect(select.ok).toBe(true);
+      expect(pwMocks.selectOptionViaPlaywright).toHaveBeenCalledWith({
+        cdpUrl: cdpBaseUrl,
+        targetId: "abcd1234",
+        ref: "5",
+        values: ["a", "b"],
+      });
 
-    const resize = (await postJson(`${base}/act`, {
-      kind: "resize",
-      width: 800,
-      height: 600,
-    })) as { ok: boolean };
-    expect(resize.ok).toBe(true);
-    expect(pwMocks.resizeViewportViaPlaywright).toHaveBeenCalledWith({
-      cdpUrl: cdpBaseUrl,
-      targetId: "abcd1234",
-      width: 800,
-      height: 600,
-    });
+      const fill = (await postJson(`${base}/act`, {
+        kind: "fill",
+        fields: [{ ref: "6", type: "textbox", value: "hello" }],
+      })) as { ok: boolean };
+      expect(fill.ok).toBe(true);
+      expect(pwMocks.fillFormViaPlaywright).toHaveBeenCalledWith({
+        cdpUrl: cdpBaseUrl,
+        targetId: "abcd1234",
+        fields: [{ ref: "6", type: "textbox", value: "hello" }],
+      });
 
-    const wait = (await postJson(`${base}/act`, {
-      kind: "wait",
-      timeMs: 5,
-    })) as { ok: boolean };
-    expect(wait.ok).toBe(true);
-    expect(pwMocks.waitForViaPlaywright).toHaveBeenCalledWith({
-      cdpUrl: cdpBaseUrl,
-      targetId: "abcd1234",
-      timeMs: 5,
-      text: undefined,
-      textGone: undefined,
-    });
+      const resize = (await postJson(`${base}/act`, {
+        kind: "resize",
+        width: 800,
+        height: 600,
+      })) as { ok: boolean };
+      expect(resize.ok).toBe(true);
+      expect(pwMocks.resizeViewportViaPlaywright).toHaveBeenCalledWith({
+        cdpUrl: cdpBaseUrl,
+        targetId: "abcd1234",
+        width: 800,
+        height: 600,
+      });
 
-    const evalRes = (await postJson(`${base}/act`, {
-      kind: "evaluate",
-      fn: "() => 1",
-    })) as { ok: boolean; result?: unknown };
-    expect(evalRes.ok).toBe(true);
-    expect(evalRes.result).toBe("ok");
-    expect(pwMocks.evaluateViaPlaywright).toHaveBeenCalledWith({
-      cdpUrl: cdpBaseUrl,
-      targetId: "abcd1234",
-      fn: "() => 1",
-      ref: undefined,
-    });
-  });
+      const wait = (await postJson(`${base}/act`, {
+        kind: "wait",
+        timeMs: 5,
+      })) as { ok: boolean };
+      expect(wait.ok).toBe(true);
+      expect(pwMocks.waitForViaPlaywright).toHaveBeenCalledWith({
+        cdpUrl: cdpBaseUrl,
+        targetId: "abcd1234",
+        timeMs: 5,
+        text: undefined,
+        textGone: undefined,
+      });
+
+      const evalRes = (await postJson(`${base}/act`, {
+        kind: "evaluate",
+        fn: "() => 1",
+      })) as { ok: boolean; result?: unknown };
+      expect(evalRes.ok).toBe(true);
+      expect(evalRes.result).toBe("ok");
+      expect(pwMocks.evaluateViaPlaywright).toHaveBeenCalledWith({
+        cdpUrl: cdpBaseUrl,
+        targetId: "abcd1234",
+        fn: "() => 1",
+        ref: undefined,
+      });
+    },
+    slowTimeoutMs,
+  );
 
   it("agent contract: hooks + response + downloads + screenshot", async () => {
     const base = await startServerAndBase();
@@ -390,9 +400,10 @@ describe("browser control server", () => {
     });
     expect(responseBody).toMatchObject({ ok: true });
 
-    const consoleRes = (await realFetch(`${base}/console?level=error`).then(
-      (r) => r.json(),
-    )) as { ok: boolean; messages?: unknown[] };
+    const consoleRes = (await realFetch(`${base}/console?level=error`).then((r) => r.json())) as {
+      ok: boolean;
+      messages?: unknown[];
+    };
     expect(consoleRes.ok).toBe(true);
     expect(Array.isArray(consoleRes.messages)).toBe(true);
 

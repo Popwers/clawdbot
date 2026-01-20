@@ -5,11 +5,7 @@ import {
   resolveSessionAgentId,
 } from "../../agents/agent-scope.js";
 import { lookupContextTokens } from "../../agents/context.js";
-import {
-  DEFAULT_CONTEXT_TOKENS,
-  DEFAULT_MODEL,
-  DEFAULT_PROVIDER,
-} from "../../agents/defaults.js";
+import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../../agents/defaults.js";
 import {
   buildModelAliasIndex,
   type ModelAliasIndex,
@@ -18,15 +14,12 @@ import {
   resolveModelRefFromString,
 } from "../../agents/model-selection.js";
 import type { ClawdbotConfig } from "../../config/config.js";
-import { type SessionEntry, saveSessionStore } from "../../config/sessions.js";
+import { type SessionEntry, updateSessionStore } from "../../config/sessions.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { applyVerboseOverride } from "../../sessions/level-overrides.js";
 import { resolveProfileOverride } from "./directive-handling.auth.js";
 import type { InlineDirectives } from "./directive-handling.parse.js";
-import {
-  formatElevatedEvent,
-  formatReasoningEvent,
-} from "./directive-handling.shared.js";
+import { formatElevatedEvent, formatReasoningEvent } from "./directive-handling.shared.js";
 import type { ElevatedLevel, ReasoningLevel } from "./directives.js";
 
 export async function persistInlineDirectives(params: {
@@ -78,16 +71,14 @@ export async function persistInlineDirectives(params: {
       (sessionEntry.elevatedLevel as ElevatedLevel | undefined) ??
       (agentCfg?.elevatedDefault as ElevatedLevel | undefined) ??
       (elevatedAllowed ? ("on" as ElevatedLevel) : ("off" as ElevatedLevel));
-    const prevReasoningLevel =
-      (sessionEntry.reasoningLevel as ReasoningLevel | undefined) ?? "off";
+    const prevReasoningLevel = (sessionEntry.reasoningLevel as ReasoningLevel | undefined) ?? "off";
     let elevatedChanged =
       directives.hasElevatedDirective &&
       directives.elevatedLevel !== undefined &&
       elevatedEnabled &&
       elevatedAllowed;
     let reasoningChanged =
-      directives.hasReasoningDirective &&
-      directives.reasoningLevel !== undefined;
+      directives.hasReasoningDirective && directives.reasoningLevel !== undefined;
     let updated = false;
 
     if (directives.hasThinkDirective && directives.thinkLevel) {
@@ -124,9 +115,26 @@ export async function persistInlineDirectives(params: {
       sessionEntry.elevatedLevel = directives.elevatedLevel;
       elevatedChanged =
         elevatedChanged ||
-        (directives.elevatedLevel !== prevElevatedLevel &&
-          directives.elevatedLevel !== undefined);
+        (directives.elevatedLevel !== prevElevatedLevel && directives.elevatedLevel !== undefined);
       updated = true;
+    }
+    if (directives.hasExecDirective && directives.hasExecOptions) {
+      if (directives.execHost) {
+        sessionEntry.execHost = directives.execHost;
+        updated = true;
+      }
+      if (directives.execSecurity) {
+        sessionEntry.execSecurity = directives.execSecurity;
+        updated = true;
+      }
+      if (directives.execAsk) {
+        sessionEntry.execAsk = directives.execAsk;
+        updated = true;
+      }
+      if (directives.execNode) {
+        sessionEntry.execNode = directives.execNode;
+        updated = true;
+      }
     }
 
     const modelDirective =
@@ -156,8 +164,7 @@ export async function persistInlineDirectives(params: {
             profileOverride = profileResolved.profileId;
           }
           const isDefault =
-            resolved.ref.provider === defaultProvider &&
-            resolved.ref.model === defaultModel;
+            resolved.ref.provider === defaultProvider && resolved.ref.model === defaultModel;
           if (isDefault) {
             delete sessionEntry.providerOverride;
             delete sessionEntry.modelOverride;
@@ -167,20 +174,21 @@ export async function persistInlineDirectives(params: {
           }
           if (profileOverride) {
             sessionEntry.authProfileOverride = profileOverride;
+            sessionEntry.authProfileOverrideSource = "user";
+            delete sessionEntry.authProfileOverrideCompactionCount;
           } else if (directives.hasModelDirective) {
             delete sessionEntry.authProfileOverride;
+            delete sessionEntry.authProfileOverrideSource;
+            delete sessionEntry.authProfileOverrideCompactionCount;
           }
           provider = resolved.ref.provider;
           model = resolved.ref.model;
           const nextLabel = `${provider}/${model}`;
           if (nextLabel !== initialModelLabel) {
-            enqueueSystemEvent(
-              formatModelSwitchEvent(nextLabel, resolved.alias),
-              {
-                sessionKey,
-                contextKey: `model:${nextLabel}`,
-              },
-            );
+            enqueueSystemEvent(formatModelSwitchEvent(nextLabel, resolved.alias), {
+              sessionKey,
+              contextKey: `model:${nextLabel}`,
+            });
           }
           updated = true;
         }
@@ -198,19 +206,19 @@ export async function persistInlineDirectives(params: {
       sessionEntry.updatedAt = Date.now();
       sessionStore[sessionKey] = sessionEntry;
       if (storePath) {
-        await saveSessionStore(storePath, sessionStore);
+        await updateSessionStore(storePath, (store) => {
+          store[sessionKey] = sessionEntry;
+        });
       }
       if (elevatedChanged) {
-        const nextElevated = (sessionEntry.elevatedLevel ??
-          "off") as ElevatedLevel;
+        const nextElevated = (sessionEntry.elevatedLevel ?? "off") as ElevatedLevel;
         enqueueSystemEvent(formatElevatedEvent(nextElevated), {
           sessionKey,
           contextKey: "mode:elevated",
         });
       }
       if (reasoningChanged) {
-        const nextReasoning = (sessionEntry.reasoningLevel ??
-          "off") as ReasoningLevel;
+        const nextReasoning = (sessionEntry.reasoningLevel ?? "off") as ReasoningLevel;
         enqueueSystemEvent(formatReasoningEvent(nextReasoning), {
           sessionKey,
           contextKey: "mode:reasoning",
@@ -222,17 +230,11 @@ export async function persistInlineDirectives(params: {
   return {
     provider,
     model,
-    contextTokens:
-      agentCfg?.contextTokens ??
-      lookupContextTokens(model) ??
-      DEFAULT_CONTEXT_TOKENS,
+    contextTokens: agentCfg?.contextTokens ?? lookupContextTokens(model) ?? DEFAULT_CONTEXT_TOKENS,
   };
 }
 
-export function resolveDefaultModel(params: {
-  cfg: ClawdbotConfig;
-  agentId?: string;
-}): {
+export function resolveDefaultModel(params: { cfg: ClawdbotConfig; agentId?: string }): {
   defaultProvider: string;
   defaultModel: string;
   aliasIndex: ModelAliasIndex;

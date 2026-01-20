@@ -106,20 +106,18 @@ const launchCalls = vi.hoisted(() => [] as Array<{ port: number }>);
 vi.mock("./chrome.js", () => ({
   isChromeCdpReady: vi.fn(async () => reachable),
   isChromeReachable: vi.fn(async () => reachable),
-  launchClawdChrome: vi.fn(
-    async (_resolved: unknown, profile: { cdpPort: number }) => {
-      launchCalls.push({ port: profile.cdpPort });
-      reachable = true;
-      return {
-        pid: 123,
-        exe: { kind: "chrome", path: "/fake/chrome" },
-        userDataDir: "/tmp/clawd",
-        cdpPort: profile.cdpPort,
-        startedAt: Date.now(),
-        proc,
-      };
-    },
-  ),
+  launchClawdChrome: vi.fn(async (_resolved: unknown, profile: { cdpPort: number }) => {
+    launchCalls.push({ port: profile.cdpPort });
+    reachable = true;
+    return {
+      pid: 123,
+      exe: { kind: "chrome", path: "/fake/chrome" },
+      userDataDir: "/tmp/clawd",
+      cdpPort: profile.cdpPort,
+      startedAt: Date.now(),
+      proc,
+    };
+  }),
   resolveClawdUserDataDir: vi.fn(() => "/tmp/clawd"),
   stopClawdChrome: vi.fn(async () => {
     reachable = false;
@@ -130,6 +128,12 @@ vi.mock("./cdp.js", () => ({
   createTargetViaCdp: cdpMocks.createTargetViaCdp,
   normalizeCdpWsUrl: vi.fn((wsUrl: string) => wsUrl),
   snapshotAria: cdpMocks.snapshotAria,
+  getHeadersWithAuth: vi.fn(() => ({})),
+  appendCdpPath: vi.fn((cdpUrl: string, path: string) => {
+    const base = cdpUrl.replace(/\/$/, "");
+    const suffix = path.startsWith("/") ? path : `/${path}`;
+    return `${base}${suffix}`;
+  }),
 }));
 
 vi.mock("./pw-ai.js", () => pwMocks);

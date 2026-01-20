@@ -12,8 +12,7 @@ vi.mock("../agents/pi-embedded.js", () => ({
   abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
   runEmbeddedPiAgent: vi.fn(),
   queueEmbeddedPiMessage: vi.fn().mockReturnValue(false),
-  resolveEmbeddedSessionLane: (key: string) =>
-    `session:${key.trim() || "main"}`,
+  resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
   isEmbeddedPiRunActive: vi.fn().mockReturnValue(false),
   isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),
 }));
@@ -73,6 +72,7 @@ describe("directive behavior", () => {
           Provider: "whatsapp",
           SenderE164: "+1222",
           SessionKey: "agent:work:main",
+          CommandAuthorized: true,
         },
         {},
         {
@@ -119,6 +119,7 @@ describe("directive behavior", () => {
           Provider: "whatsapp",
           SenderE164: "+1333",
           SessionKey: "agent:work:main",
+          CommandAuthorized: true,
         },
         {},
         {
@@ -164,6 +165,7 @@ describe("directive behavior", () => {
           To: "+1222",
           Provider: "whatsapp",
           SenderE164: "+1222",
+          CommandAuthorized: true,
         },
         {},
         {
@@ -201,6 +203,7 @@ describe("directive behavior", () => {
           To: "+1222",
           Provider: "whatsapp",
           SenderE164: "+1222",
+          CommandAuthorized: true,
         },
         {},
         {
@@ -236,6 +239,7 @@ describe("directive behavior", () => {
           To: "+1222",
           Provider: "whatsapp",
           SenderE164: "+1222",
+          CommandAuthorized: true,
         },
         {},
         {

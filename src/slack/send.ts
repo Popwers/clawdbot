@@ -1,15 +1,13 @@
 import { type FilesUploadV2Arguments, WebClient } from "@slack/web-api";
 
-import {
-  chunkMarkdownText,
-  resolveTextChunkLimit,
-} from "../auto-reply/chunk.js";
+import { resolveTextChunkLimit } from "../auto-reply/chunk.js";
 import { loadConfig } from "../config/config.js";
 import { logVerbose } from "../globals.js";
 import { loadWebMedia } from "../web/media.js";
 import type { SlackTokenSource } from "./accounts.js";
 import { resolveSlackAccount } from "./accounts.js";
-import { markdownToSlackMrkdwn } from "./format.js";
+import { markdownToSlackMrkdwnChunks } from "./format.js";
+import { parseSlackTarget } from "./targets.js";
 import { resolveSlackBotToken } from "./token.js";
 
 const SLACK_TEXT_LIMIT = 4000;
@@ -60,38 +58,11 @@ function resolveToken(params: {
 }
 
 function parseRecipient(raw: string): SlackRecipient {
-  const trimmed = raw.trim();
-  if (!trimmed) {
+  const target = parseSlackTarget(raw);
+  if (!target) {
     throw new Error("Recipient is required for Slack sends");
   }
-  const mentionMatch = trimmed.match(/^<@([A-Z0-9]+)>$/i);
-  if (mentionMatch) {
-    return { kind: "user", id: mentionMatch[1] };
-  }
-  if (trimmed.startsWith("user:")) {
-    return { kind: "user", id: trimmed.slice("user:".length) };
-  }
-  if (trimmed.startsWith("channel:")) {
-    return { kind: "channel", id: trimmed.slice("channel:".length) };
-  }
-  if (trimmed.startsWith("slack:")) {
-    return { kind: "user", id: trimmed.slice("slack:".length) };
-  }
-  if (trimmed.startsWith("@")) {
-    const candidate = trimmed.slice(1);
-    if (!/^[A-Z0-9]+$/i.test(candidate)) {
-      throw new Error("Slack DMs require a user id (use user:<id> or <@id>)");
-    }
-    return { kind: "user", id: candidate };
-  }
-  if (trimmed.startsWith("#")) {
-    const candidate = trimmed.slice(1);
-    if (!/^[A-Z0-9]+$/i.test(candidate)) {
-      throw new Error("Slack channels require a channel id (use channel:<id>)");
-    }
-    return { kind: "channel", id: candidate };
-  }
-  return { kind: "channel", id: trimmed };
+  return { kind: target.kind, id: target.id };
 }
 
 async function resolveChannelId(
@@ -117,10 +88,7 @@ async function uploadSlackFile(params: {
   threadTs?: string;
   maxBytes?: number;
 }): Promise<string> {
-  const { buffer, contentType, fileName } = await loadWebMedia(
-    params.mediaUrl,
-    params.maxBytes,
-  );
+  const { buffer, contentType, fileName } = await loadWebMedia(params.mediaUrl, params.maxBytes);
   const basePayload = {
     channel_id: params.channelId,
     file: buffer,
@@ -170,8 +138,7 @@ export async function sendMessageSlack(
   const { channelId } = await resolveChannelId(client, recipient);
   const textLimit = resolveTextChunkLimit(cfg, "slack", account.accountId);
   const chunkLimit = Math.min(textLimit, SLACK_TEXT_LIMIT);
-  const slackFormatted = markdownToSlackMrkdwn(trimmedMessage);
-  const chunks = chunkMarkdownText(slackFormatted, chunkLimit);
+  const chunks = markdownToSlackMrkdwnChunks(trimmedMessage, chunkLimit);
   const mediaMaxBytes =
     typeof account.config.mediaMaxMb === "number"
       ? account.config.mediaMaxMb * 1024 * 1024

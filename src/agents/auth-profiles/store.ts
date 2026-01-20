@@ -3,29 +3,14 @@ import type { OAuthCredentials } from "@mariozechner/pi-ai";
 import lockfile from "proper-lockfile";
 import { resolveOAuthPath } from "../../config/paths.js";
 import { loadJsonFile, saveJsonFile } from "../../infra/json-file.js";
-import {
-  AUTH_STORE_LOCK_OPTIONS,
-  AUTH_STORE_VERSION,
-  log,
-} from "./constants.js";
+import { AUTH_STORE_LOCK_OPTIONS, AUTH_STORE_VERSION, log } from "./constants.js";
 import { syncExternalCliCredentials } from "./external-cli-sync.js";
-import {
-  ensureAuthStoreFile,
-  resolveAuthStorePath,
-  resolveLegacyAuthStorePath,
-} from "./paths.js";
-import type {
-  AuthProfileCredential,
-  AuthProfileStore,
-  ProfileUsageStats,
-} from "./types.js";
+import { ensureAuthStoreFile, resolveAuthStorePath, resolveLegacyAuthStorePath } from "./paths.js";
+import type { AuthProfileCredential, AuthProfileStore, ProfileUsageStats } from "./types.js";
 
 type LegacyAuthStore = Record<string, AuthProfileCredential>;
 
-function _syncAuthProfileStore(
-  target: AuthProfileStore,
-  source: AuthProfileStore,
-): void {
+function _syncAuthProfileStore(target: AuthProfileStore, source: AuthProfileStore): void {
   target.version = source.version;
   target.profiles = source.profiles;
   target.order = source.order;
@@ -70,11 +55,7 @@ function coerceLegacyStore(raw: unknown): LegacyAuthStore | null {
   for (const [key, value] of Object.entries(record)) {
     if (!value || typeof value !== "object") continue;
     const typed = value as Partial<AuthProfileCredential>;
-    if (
-      typed.type !== "api_key" &&
-      typed.type !== "oauth" &&
-      typed.type !== "token"
-    ) {
+    if (typed.type !== "api_key" && typed.type !== "oauth" && typed.type !== "token") {
       continue;
     }
     entries[key] = {
@@ -94,11 +75,7 @@ function coerceAuthStore(raw: unknown): AuthProfileStore | null {
   for (const [key, value] of Object.entries(profiles)) {
     if (!value || typeof value !== "object") continue;
     const typed = value as Partial<AuthProfileCredential>;
-    if (
-      typed.type !== "api_key" &&
-      typed.type !== "oauth" &&
-      typed.type !== "token"
-    ) {
+    if (typed.type !== "api_key" && typed.type !== "oauth" && typed.type !== "token") {
       continue;
     }
     if (!typed.provider) continue;
@@ -131,6 +108,37 @@ function coerceAuthStore(raw: unknown): AuthProfileStore | null {
       record.usageStats && typeof record.usageStats === "object"
         ? (record.usageStats as Record<string, ProfileUsageStats>)
         : undefined,
+  };
+}
+
+function mergeRecord<T>(
+  base?: Record<string, T>,
+  override?: Record<string, T>,
+): Record<string, T> | undefined {
+  if (!base && !override) return undefined;
+  if (!base) return { ...override };
+  if (!override) return { ...base };
+  return { ...base, ...override };
+}
+
+function mergeAuthProfileStores(
+  base: AuthProfileStore,
+  override: AuthProfileStore,
+): AuthProfileStore {
+  if (
+    Object.keys(override.profiles).length === 0 &&
+    !override.order &&
+    !override.lastGood &&
+    !override.usageStats
+  ) {
+    return base;
+  }
+  return {
+    version: Math.max(base.version, override.version ?? base.version),
+    profiles: { ...base.profiles, ...override.profiles },
+    order: mergeRecord(base.order, override.order),
+    lastGood: mergeRecord(base.lastGood, override.lastGood),
+    usageStats: mergeRecord(base.usageStats, override.usageStats),
   };
 }
 
@@ -188,9 +196,7 @@ export function loadAuthProfileStore(): AuthProfileStore {
           type: "token",
           provider: String(cred.provider ?? provider),
           token: cred.token,
-          ...(typeof cred.expires === "number"
-            ? { expires: cred.expires }
-            : {}),
+          ...(typeof cred.expires === "number" ? { expires: cred.expires } : {}),
           ...(cred.email ? { email: cred.email } : {}),
         };
       } else {
@@ -216,7 +222,7 @@ export function loadAuthProfileStore(): AuthProfileStore {
   return store;
 }
 
-export function ensureAuthProfileStore(
+function loadAuthProfileStoreForAgent(
   agentDir?: string,
   options?: { allowKeychainPrompt?: boolean },
 ): AuthProfileStore {
@@ -230,6 +236,19 @@ export function ensureAuthProfileStore(
       saveJsonFile(authPath, asStore);
     }
     return asStore;
+  }
+
+  // Fallback: inherit auth-profiles from main agent if subagent has none
+  if (agentDir) {
+    const mainAuthPath = resolveAuthStorePath(); // without agentDir = main
+    const mainRaw = loadJsonFile(mainAuthPath);
+    const mainStore = coerceAuthStore(mainRaw);
+    if (mainStore && Object.keys(mainStore.profiles).length > 0) {
+      // Clone main store to subagent directory for auth inheritance
+      saveJsonFile(authPath, mainStore);
+      log.info("inherited auth-profiles from main agent", { agentDir });
+      return mainStore;
+    }
   }
 
   const legacyRaw = loadJsonFile(resolveLegacyAuthStorePath(agentDir));
@@ -253,9 +272,7 @@ export function ensureAuthProfileStore(
           type: "token",
           provider: String(cred.provider ?? provider),
           token: cred.token,
-          ...(typeof cred.expires === "number"
-            ? { expires: cred.expires }
-            : {}),
+          ...(typeof cred.expires === "number" ? { expires: cred.expires } : {}),
           ...(cred.email ? { email: cred.email } : {}),
         };
       } else {
@@ -301,10 +318,22 @@ export function ensureAuthProfileStore(
   return store;
 }
 
-export function saveAuthProfileStore(
-  store: AuthProfileStore,
+export function ensureAuthProfileStore(
   agentDir?: string,
-): void {
+  options?: { allowKeychainPrompt?: boolean },
+): AuthProfileStore {
+  const store = loadAuthProfileStoreForAgent(agentDir, options);
+  const authPath = resolveAuthStorePath(agentDir);
+  const mainAuthPath = resolveAuthStorePath();
+  if (!agentDir || authPath === mainAuthPath) {
+    return store;
+  }
+
+  const mainStore = loadAuthProfileStoreForAgent(undefined, options);
+  return mergeAuthProfileStores(mainStore, store);
+}
+
+export function saveAuthProfileStore(store: AuthProfileStore, agentDir?: string): void {
   const authPath = resolveAuthStorePath(agentDir);
   const payload = {
     version: AUTH_STORE_VERSION,

@@ -1,7 +1,4 @@
-import type {
-  ClawdbotConfig,
-  SlackSlashCommandConfig,
-} from "../../config/config.js";
+import type { ClawdbotConfig, SlackSlashCommandConfig } from "../../config/config.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import type { SlackFile, SlackMessageEvent } from "../types.js";
 
@@ -9,6 +6,7 @@ export type MonitorSlackOpts = {
   botToken?: string;
   appToken?: string;
   accountId?: string;
+  mode?: "socket" | "http";
   config?: ClawdbotConfig;
   runtime?: RuntimeEnv;
   abortSignal?: AbortSignal;
@@ -46,6 +44,13 @@ export type SlackChannelCreatedEvent = {
 export type SlackChannelRenamedEvent = {
   type: "channel_rename";
   channel?: { id?: string; name?: string; name_normalized?: string };
+  event_ts?: string;
+};
+
+export type SlackChannelIdChangedEvent = {
+  type: "channel_id_changed";
+  old_channel_id?: string;
+  new_channel_id?: string;
   event_ts?: string;
 };
 

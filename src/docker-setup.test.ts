@@ -131,9 +131,7 @@ describe("docker-setup.sh", () => {
     expect(result.status).toBe(0);
 
     const envFile = await readFile(join(rootDir, ".env"), "utf8");
-    expect(envFile).toContain(
-      "CLAWDBOT_DOCKER_APT_PACKAGES=ffmpeg build-essential",
-    );
+    expect(envFile).toContain("CLAWDBOT_DOCKER_APT_PACKAGES=ffmpeg build-essential");
 
     const log = await readFile(logPath, "utf8");
     expect(log).toContain(

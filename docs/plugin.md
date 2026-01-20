@@ -33,31 +33,58 @@ clawdbot plugins install @clawdbot/voice-call
 
 See [Voice Call](/plugins/voice-call) for a concrete example plugin.
 
+## Available plugins (official)
+
+- Microsoft Teams is plugin-only as of 2026.1.15; install `@clawdbot/msteams` if you use Teams.
+- Memory (Core) — bundled memory search plugin (enabled by default via `plugins.slots.memory`)
+- Memory (LanceDB) — bundled long-term memory plugin (auto-recall/capture; set `plugins.slots.memory = "memory-lancedb"`)
+- [Voice Call](/plugins/voice-call) — `@clawdbot/voice-call`
+- [Zalo Personal](/plugins/zalouser) — `@clawdbot/zalouser`
+- [Matrix](/channels/matrix) — `@clawdbot/matrix`
+- [Zalo](/channels/zalo) — `@clawdbot/zalo`
+- [Microsoft Teams](/channels/msteams) — `@clawdbot/msteams`
+- Google Antigravity OAuth (provider auth) — bundled as `google-antigravity-auth` (disabled by default)
+- Gemini CLI OAuth (provider auth) — bundled as `google-gemini-cli-auth` (disabled by default)
+- Qwen OAuth (provider auth) — bundled as `qwen-portal-auth` (disabled by default)
+- Copilot Proxy (provider auth) — local VS Code Copilot Proxy bridge; distinct from built-in `github-copilot` device login (bundled, disabled by default)
+
 Clawdbot plugins are **TypeScript modules** loaded at runtime via jiti. They can
 register:
 
 - Gateway RPC methods
+- Gateway HTTP handlers
 - Agent tools
 - CLI commands
 - Background services
 - Optional config validation
 
 Plugins run **in‑process** with the Gateway, so treat them as trusted code.
+Tool authoring guide: [Plugin agent tools](/plugins/agent-tools).
 
 ## Discovery & precedence
 
 Clawdbot scans, in order:
 
-1) Global extensions
-- `~/.clawdbot/extensions/*.ts`
-- `~/.clawdbot/extensions/*/index.ts`
+1) Config paths
+- `plugins.load.paths` (file or directory)
 
 2) Workspace extensions
 - `<workspace>/.clawdbot/extensions/*.ts`
 - `<workspace>/.clawdbot/extensions/*/index.ts`
 
-3) Config paths
-- `plugins.load.paths` (file or directory)
+3) Global extensions
+- `~/.clawdbot/extensions/*.ts`
+- `~/.clawdbot/extensions/*/index.ts`
+
+4) Bundled extensions (shipped with Clawdbot, **disabled by default**)
+- `<clawdbot>/extensions/*`
+
+Bundled plugins must be enabled explicitly via `plugins.entries.<id>.enabled`
+or `clawdbot plugins enable <id>`. Installed plugins are enabled by default,
+but can be disabled the same way.
+
+If multiple plugins resolve to the same id, the first match in the order above
+wins and lower-precedence copies are ignored.
 
 ### Package packs
 
@@ -113,6 +140,24 @@ Fields:
 
 Config changes **require a gateway restart**.
 
+## Plugin slots (exclusive categories)
+
+Some plugin categories are **exclusive** (only one active at a time). Use
+`plugins.slots` to select which plugin owns the slot:
+
+```json5
+{
+  plugins: {
+    slots: {
+      memory: "memory-core" // or "none" to disable memory plugins
+    }
+  }
+}
+```
+
+If multiple plugins declare `kind: "memory"`, only the selected one loads. Others
+are disabled with diagnostics.
+
 ## Control UI (schema + labels)
 
 The Control UI uses `config.schema` (JSON Schema + `uiHints`) to render better forms.
@@ -147,14 +192,20 @@ export default {
 ```bash
 clawdbot plugins list
 clawdbot plugins info <id>
-clawdbot plugins install <path>              # add a local file/dir to plugins.load.paths
+clawdbot plugins install <path>                 # copy a local file/dir into ~/.clawdbot/extensions/<id>
 clawdbot plugins install ./extensions/voice-call # relative path ok
-clawdbot plugins install ./plugin.tgz        # install from a local tarball
+clawdbot plugins install ./plugin.tgz           # install from a local tarball
+clawdbot plugins install ./plugin.zip           # install from a local zip
+clawdbot plugins install -l ./extensions/voice-call # link (no copy) for dev
 clawdbot plugins install @clawdbot/voice-call # install from npm
+clawdbot plugins update <id>
+clawdbot plugins update --all
 clawdbot plugins enable <id>
 clawdbot plugins disable <id>
 clawdbot plugins doctor
 ```
+
+`plugins update` only works for npm installs tracked under `plugins.installs`.
 
 Plugins may also register their own top‑level commands (example: `clawdbot voicecall`).
 
@@ -165,24 +216,195 @@ Plugins export either:
 - A function: `(api) => { ... }`
 - An object: `{ id, name, configSchema, register(api) { ... } }`
 
-### Register a tool
+## Plugin hooks
 
-```ts
-import { Type } from "@sinclair/typebox";
+Plugins can ship hooks and register them at runtime. This lets a plugin bundle
+event-driven automation without a separate hook pack install.
 
-export default function (api) {
-  api.registerTool({
-    name: "my_tool",
-    description: "Do a thing",
-    parameters: Type.Object({
-      input: Type.String(),
-    }),
-    async execute(_id, params) {
-      return { content: [{ type: "text", text: params.input }] };
-    },
-  });
+### Example
+
+```
+import { registerPluginHooksFromDir } from "clawdbot/plugin-sdk";
+
+export default function register(api) {
+  registerPluginHooksFromDir(api, "./hooks");
 }
 ```
+
+Notes:
+- Hook directories follow the normal hook structure (`HOOK.md` + `handler.ts`).
+- Hook eligibility rules still apply (OS/bins/env/config requirements).
+- Plugin-managed hooks show up in `clawdbot hooks list` with `plugin:<id>`.
+- You cannot enable/disable plugin-managed hooks via `clawdbot hooks`; enable/disable the plugin instead.
+
+## Provider plugins (model auth)
+
+Plugins can register **model provider auth** flows so users can run OAuth or
+API-key setup inside Clawdbot (no external scripts needed).
+
+Register a provider via `api.registerProvider(...)`. Each provider exposes one
+or more auth methods (OAuth, API key, device code, etc.). These methods power:
+
+- `clawdbot models auth login --provider <id> [--method <id>]`
+
+Example:
+
+```ts
+api.registerProvider({
+  id: "acme",
+  label: "AcmeAI",
+  auth: [
+    {
+      id: "oauth",
+      label: "OAuth",
+      kind: "oauth",
+      run: async (ctx) => {
+        // Run OAuth flow and return auth profiles.
+        return {
+          profiles: [
+            {
+              profileId: "acme:default",
+              credential: {
+                type: "oauth",
+                provider: "acme",
+                access: "...",
+                refresh: "...",
+                expires: Date.now() + 3600 * 1000,
+              },
+            },
+          ],
+          defaultModel: "acme/opus-1",
+        };
+      },
+    },
+  ],
+});
+```
+
+Notes:
+- `run` receives a `ProviderAuthContext` with `prompter`, `runtime`,
+  `openUrl`, and `oauth.createVpsAwareHandlers` helpers.
+- Return `configPatch` when you need to add default models or provider config.
+- Return `defaultModel` so `--set-default` can update agent defaults.
+
+### Register a messaging channel
+
+Plugins can register **channel plugins** that behave like built‑in channels
+(WhatsApp, Telegram, etc.). Channel config lives under `channels.<id>` and is
+validated by your channel plugin code.
+
+```ts
+const myChannel = {
+  id: "acmechat",
+  meta: {
+    id: "acmechat",
+    label: "AcmeChat",
+    selectionLabel: "AcmeChat (API)",
+    docsPath: "/channels/acmechat",
+    blurb: "demo channel plugin.",
+    aliases: ["acme"],
+  },
+  capabilities: { chatTypes: ["direct"] },
+  config: {
+    listAccountIds: (cfg) => Object.keys(cfg.channels?.acmechat?.accounts ?? {}),
+    resolveAccount: (cfg, accountId) =>
+      (cfg.channels?.acmechat?.accounts?.[accountId ?? "default"] ?? { accountId }),
+  },
+  outbound: {
+    deliveryMode: "direct",
+    sendText: async () => ({ ok: true }),
+  },
+};
+
+export default function (api) {
+  api.registerChannel({ plugin: myChannel });
+}
+```
+
+Notes:
+- Put config under `channels.<id>` (not `plugins.entries`).
+- `meta.label` is used for labels in CLI/UI lists.
+- `meta.aliases` adds alternate ids for normalization and CLI inputs.
+
+### Write a new messaging channel (step‑by‑step)
+
+Use this when you want a **new chat surface** (a “messaging channel”), not a model provider.
+Model provider docs live under `/providers/*`.
+
+1) Pick an id + config shape
+- All channel config lives under `channels.<id>`.
+- Prefer `channels.<id>.accounts.<accountId>` for multi‑account setups.
+
+2) Define the channel metadata
+- `meta.label`, `meta.selectionLabel`, `meta.docsPath`, `meta.blurb` control CLI/UI lists.
+- `meta.docsPath` should point at a docs page like `/channels/<id>`.
+
+3) Implement the required adapters
+- `config.listAccountIds` + `config.resolveAccount`
+- `capabilities` (chat types, media, threads, etc.)
+- `outbound.deliveryMode` + `outbound.sendText` (for basic send)
+
+4) Add optional adapters as needed
+- `setup` (wizard), `security` (DM policy), `status` (health/diagnostics)
+- `gateway` (start/stop/login), `mentions`, `threading`, `streaming`
+- `actions` (message actions), `commands` (native command behavior)
+
+5) Register the channel in your plugin
+- `api.registerChannel({ plugin })`
+
+Minimal config example:
+
+```json5
+{
+  channels: {
+    acmechat: {
+      accounts: {
+        default: { token: "ACME_TOKEN", enabled: true }
+      }
+    }
+  }
+}
+```
+
+Minimal channel plugin (outbound‑only):
+
+```ts
+const plugin = {
+  id: "acmechat",
+  meta: {
+    id: "acmechat",
+    label: "AcmeChat",
+    selectionLabel: "AcmeChat (API)",
+    docsPath: "/channels/acmechat",
+    blurb: "AcmeChat messaging channel.",
+    aliases: ["acme"],
+  },
+  capabilities: { chatTypes: ["direct"] },
+  config: {
+    listAccountIds: (cfg) => Object.keys(cfg.channels?.acmechat?.accounts ?? {}),
+    resolveAccount: (cfg, accountId) =>
+      (cfg.channels?.acmechat?.accounts?.[accountId ?? "default"] ?? { accountId }),
+  },
+  outbound: {
+    deliveryMode: "direct",
+    sendText: async ({ text }) => {
+      // deliver `text` to your channel here
+      return { ok: true };
+    },
+  },
+};
+
+export default function (api) {
+  api.registerChannel({ plugin });
+}
+```
+
+Load the plugin (extensions dir or `plugins.load.paths`), restart the gateway,
+then configure `channels.<id>` in your config.
+
+### Agent tools
+
+See the dedicated guide: [Plugin agent tools](/plugins/agent-tools).
 
 ### Register a gateway RPC method
 

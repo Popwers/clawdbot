@@ -1,8 +1,5 @@
 import type { AuthProfileStore } from "../agents/auth-profiles.js";
-import {
-  CLAUDE_CLI_PROFILE_ID,
-  CODEX_CLI_PROFILE_ID,
-} from "../agents/auth-profiles.js";
+import { CLAUDE_CLI_PROFILE_ID, CODEX_CLI_PROFILE_ID } from "../agents/auth-profiles.js";
 import { colorize, isRich, theme } from "../terminal/theme.js";
 import type { AuthChoice } from "./onboard-types.js";
 
@@ -16,12 +13,15 @@ export type AuthChoiceGroupId =
   | "openai"
   | "anthropic"
   | "google"
+  | "copilot"
   | "openrouter"
+  | "ai-gateway"
   | "moonshot"
   | "zai"
   | "opencode-zen"
   | "minimax"
-  | "synthetic";
+  | "synthetic"
+  | "qwen";
 
 export type AuthChoiceGroup = {
   value: AuthChoiceGroupId;
@@ -45,7 +45,7 @@ const AUTH_CHOICE_GROUP_DEFS: {
   {
     value: "anthropic",
     label: "Anthropic",
-    hint: "Claude CLI + API key",
+    hint: "Claude Code CLI + API key",
     choices: ["claude-cli", "setup-token", "token", "apiKey"],
   },
   {
@@ -53,6 +53,12 @@ const AUTH_CHOICE_GROUP_DEFS: {
     label: "MiniMax",
     hint: "M2.1 (recommended)",
     choices: ["minimax-api", "minimax-api-lightning"],
+  },
+  {
+    value: "qwen",
+    label: "Qwen",
+    hint: "OAuth",
+    choices: ["qwen-portal"],
   },
   {
     value: "synthetic",
@@ -63,8 +69,14 @@ const AUTH_CHOICE_GROUP_DEFS: {
   {
     value: "google",
     label: "Google",
-    hint: "Antigravity + Gemini API key",
-    choices: ["antigravity", "gemini-api-key"],
+    hint: "Gemini API key + OAuth",
+    choices: ["gemini-api-key", "google-antigravity", "google-gemini-cli"],
+  },
+  {
+    value: "copilot",
+    label: "Copilot",
+    hint: "GitHub + local proxy",
+    choices: ["github-copilot", "copilot-proxy"],
   },
   {
     value: "openrouter",
@@ -73,10 +85,16 @@ const AUTH_CHOICE_GROUP_DEFS: {
     choices: ["openrouter-api-key"],
   },
   {
+    value: "ai-gateway",
+    label: "Vercel AI Gateway",
+    hint: "API key",
+    choices: ["ai-gateway-api-key"],
+  },
+  {
     value: "moonshot",
     label: "Moonshot AI",
-    hint: "Kimi K2 preview",
-    choices: ["moonshot-api-key"],
+    hint: "Kimi K2 + Kimi Code",
+    choices: ["moonshot-api-key", "kimi-code-api-key"],
   },
   {
     value: "zai",
@@ -92,10 +110,7 @@ const AUTH_CHOICE_GROUP_DEFS: {
   },
 ];
 
-function formatOAuthHint(
-  expires?: number,
-  opts?: { allowStale?: boolean },
-): string {
+function formatOAuthHint(expires?: number, opts?: { allowStale?: boolean }): string {
   const rich = isRich();
   if (!expires) {
     return colorize(rich, theme.muted, "token unavailable");
@@ -144,27 +159,27 @@ export function buildAuthChoiceOptions(params: {
   if (claudeCli?.type === "oauth" || claudeCli?.type === "token") {
     options.push({
       value: "claude-cli",
-      label: "Anthropic token (Claude CLI)",
-      hint: formatOAuthHint(claudeCli.expires),
+      label: "Anthropic token (Claude Code CLI)",
+      hint: `reuses existing Claude Code auth · ${formatOAuthHint(claudeCli.expires)}`,
     });
   } else if (params.includeClaudeCliIfMissing && platform === "darwin") {
     options.push({
       value: "claude-cli",
-      label: "Anthropic token (Claude CLI)",
-      hint: "requires Keychain access",
+      label: "Anthropic token (Claude Code CLI)",
+      hint: "reuses existing Claude Code auth · requires Keychain access",
     });
   }
 
   options.push({
     value: "setup-token",
     label: "Anthropic token (run setup-token)",
-    hint: "Runs `claude setup-token`",
+    hint: "runs `claude setup-token` · opens browser for fresh OAuth login",
   });
 
   options.push({
     value: "token",
     label: "Anthropic token (paste setup-token)",
-    hint: "Run `claude setup-token`, then paste the token",
+    hint: "run `claude setup-token` elsewhere, then paste the token here",
   });
 
   options.push({
@@ -174,19 +189,36 @@ export function buildAuthChoiceOptions(params: {
   options.push({ value: "chutes", label: "Chutes (OAuth)" });
   options.push({ value: "openai-api-key", label: "OpenAI API key" });
   options.push({ value: "openrouter-api-key", label: "OpenRouter API key" });
-  options.push({ value: "moonshot-api-key", label: "Moonshot AI API key" });
-  options.push({ value: "synthetic-api-key", label: "Synthetic API key" });
   options.push({
-    value: "antigravity",
-    label: "Google Antigravity (Claude Opus 4.5, Gemini 3, etc.)",
+    value: "ai-gateway-api-key",
+    label: "Vercel AI Gateway API key",
   });
+  options.push({ value: "moonshot-api-key", label: "Moonshot AI API key" });
+  options.push({ value: "kimi-code-api-key", label: "Kimi Code API key" });
+  options.push({ value: "synthetic-api-key", label: "Synthetic API key" });
   options.push({
     value: "github-copilot",
     label: "GitHub Copilot (GitHub device login)",
     hint: "Uses GitHub device flow",
   });
   options.push({ value: "gemini-api-key", label: "Google Gemini API key" });
+  options.push({
+    value: "google-antigravity",
+    label: "Google Antigravity OAuth",
+    hint: "Uses the bundled Antigravity auth plugin",
+  });
+  options.push({
+    value: "google-gemini-cli",
+    label: "Google Gemini CLI OAuth",
+    hint: "Uses the bundled Gemini CLI auth plugin",
+  });
   options.push({ value: "zai-api-key", label: "Z.AI (GLM 4.7) API key" });
+  options.push({ value: "qwen-portal", label: "Qwen OAuth" });
+  options.push({
+    value: "copilot-proxy",
+    label: "Copilot Proxy (local)",
+    hint: "Local proxy for VS Code Copilot models",
+  });
   options.push({ value: "apiKey", label: "Anthropic API key" });
   // Token flow is currently Anthropic-only; use CLI for advanced providers.
   options.push({

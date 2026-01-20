@@ -9,27 +9,28 @@ import { parseDurationMs } from "../../../cli/parse-duration.js";
 import type { ClawdbotConfig } from "../../../config/config.js";
 import { upsertSharedEnvVar } from "../../../infra/env-file.js";
 import type { RuntimeEnv } from "../../../runtime.js";
-import {
-  buildTokenProfileId,
-  validateAnthropicSetupToken,
-} from "../../auth-token.js";
+import { buildTokenProfileId, validateAnthropicSetupToken } from "../../auth-token.js";
 import { applyGoogleGeminiModelDefault } from "../../google-gemini-model-default.js";
 import {
   applyAuthProfileConfig,
+  applyKimiCodeConfig,
   applyMinimaxApiConfig,
   applyMinimaxConfig,
   applyMoonshotConfig,
   applyOpencodeZenConfig,
   applyOpenrouterConfig,
   applySyntheticConfig,
+  applyVercelAiGatewayConfig,
   applyZaiConfig,
   setAnthropicApiKey,
   setGeminiApiKey,
+  setKimiCodeApiKey,
   setMinimaxApiKey,
   setMoonshotApiKey,
   setOpencodeZenApiKey,
   setOpenrouterApiKey,
   setSyntheticApiKey,
+  setVercelAiGatewayApiKey,
   setZaiApiKey,
 } from "../../onboard-auth.js";
 import type { AuthChoice, OnboardOptions } from "../../onboard-types.js";
@@ -73,9 +74,7 @@ export async function applyNonInteractiveAuthChoice(params: {
     }
     const provider = normalizeProviderId(providerRaw);
     if (provider !== "anthropic") {
-      runtime.error(
-        "Only --token-provider anthropic is supported for --auth-choice token.",
-      );
+      runtime.error("Only --token-provider anthropic is supported for --auth-choice token.");
       runtime.exit(1);
       return null;
     }
@@ -96,8 +95,7 @@ export async function applyNonInteractiveAuthChoice(params: {
     const expiresInRaw = opts.tokenExpiresIn?.trim();
     if (expiresInRaw) {
       try {
-        expires =
-          Date.now() + parseDurationMs(expiresInRaw, { defaultUnit: "d" });
+        expires = Date.now() + parseDurationMs(expiresInRaw, { defaultUnit: "d" });
       } catch (err) {
         runtime.error(`Invalid --token-expires-in: ${String(err)}`);
         runtime.exit(1);
@@ -105,9 +103,7 @@ export async function applyNonInteractiveAuthChoice(params: {
       }
     }
 
-    const profileId =
-      opts.tokenProfileId?.trim() ||
-      buildTokenProfileId({ provider, name: "" });
+    const profileId = opts.tokenProfileId?.trim() || buildTokenProfileId({ provider, name: "" });
     upsertAuthProfile({
       profileId,
       credential: {
@@ -199,6 +195,25 @@ export async function applyNonInteractiveAuthChoice(params: {
     return applyOpenrouterConfig(nextConfig);
   }
 
+  if (authChoice === "ai-gateway-api-key") {
+    const resolved = await resolveNonInteractiveApiKey({
+      provider: "vercel-ai-gateway",
+      cfg: baseConfig,
+      flagValue: opts.aiGatewayApiKey,
+      flagName: "--ai-gateway-api-key",
+      envVar: "AI_GATEWAY_API_KEY",
+      runtime,
+    });
+    if (!resolved) return null;
+    if (resolved.source !== "profile") await setVercelAiGatewayApiKey(resolved.key);
+    nextConfig = applyAuthProfileConfig(nextConfig, {
+      profileId: "vercel-ai-gateway:default",
+      provider: "vercel-ai-gateway",
+      mode: "api_key",
+    });
+    return applyVercelAiGatewayConfig(nextConfig);
+  }
+
   if (authChoice === "moonshot-api-key") {
     const resolved = await resolveNonInteractiveApiKey({
       provider: "moonshot",
@@ -216,6 +231,25 @@ export async function applyNonInteractiveAuthChoice(params: {
       mode: "api_key",
     });
     return applyMoonshotConfig(nextConfig);
+  }
+
+  if (authChoice === "kimi-code-api-key") {
+    const resolved = await resolveNonInteractiveApiKey({
+      provider: "kimi-code",
+      cfg: baseConfig,
+      flagValue: opts.kimiCodeApiKey,
+      flagName: "--kimi-code-api-key",
+      envVar: "KIMICODE_API_KEY",
+      runtime,
+    });
+    if (!resolved) return null;
+    if (resolved.source !== "profile") await setKimiCodeApiKey(resolved.key);
+    nextConfig = applyAuthProfileConfig(nextConfig, {
+      profileId: "kimi-code:default",
+      provider: "kimi-code",
+      mode: "api_key",
+    });
+    return applyKimiCodeConfig(nextConfig);
   }
 
   if (authChoice === "synthetic-api-key") {
@@ -258,9 +292,7 @@ export async function applyNonInteractiveAuthChoice(params: {
       mode: "api_key",
     });
     const modelId =
-      authChoice === "minimax-api-lightning"
-        ? "MiniMax-M2.1-lightning"
-        : "MiniMax-M2.1";
+      authChoice === "minimax-api-lightning" ? "MiniMax-M2.1-lightning" : "MiniMax-M2.1";
     return applyMinimaxApiConfig(nextConfig, modelId);
   }
 
@@ -271,8 +303,8 @@ export async function applyNonInteractiveAuthChoice(params: {
     if (!store.profiles[CLAUDE_CLI_PROFILE_ID]) {
       runtime.error(
         process.platform === "darwin"
-          ? 'No Claude CLI credentials found. Run interactive onboarding to approve Keychain access for "Claude Code-credentials".'
-          : "No Claude CLI credentials found at ~/.claude/.credentials.json",
+          ? 'No Claude Code CLI credentials found. Run interactive onboarding to approve Keychain access for "Claude Code-credentials".'
+          : "No Claude Code CLI credentials found at ~/.claude/.credentials.json",
       );
       runtime.exit(1);
       return null;
@@ -280,7 +312,7 @@ export async function applyNonInteractiveAuthChoice(params: {
     return applyAuthProfileConfig(nextConfig, {
       profileId: CLAUDE_CLI_PROFILE_ID,
       provider: "anthropic",
-      mode: "token",
+      mode: "oauth",
     });
   }
 
@@ -324,10 +356,9 @@ export async function applyNonInteractiveAuthChoice(params: {
     authChoice === "oauth" ||
     authChoice === "chutes" ||
     authChoice === "openai-codex" ||
-    authChoice === "antigravity"
+    authChoice === "qwen-portal"
   ) {
-    const label = authChoice === "antigravity" ? "Antigravity" : "OAuth";
-    runtime.error(`${label} requires interactive mode.`);
+    runtime.error("OAuth requires interactive mode.");
     runtime.exit(1);
     return null;
   }

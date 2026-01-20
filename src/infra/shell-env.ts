@@ -1,14 +1,10 @@
 import { execFileSync } from "node:child_process";
 
+import { isTruthyEnvValue } from "./env.js";
+
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_BUFFER_BYTES = 2 * 1024 * 1024;
 let lastAppliedKeys: string[] = [];
-
-function isTruthy(raw: string | undefined): boolean {
-  if (!raw) return false;
-  const value = raw.trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes" || value === "on";
-}
 
 function resolveShell(env: NodeJS.ProcessEnv): string {
   const shell = env.SHELL?.trim();
@@ -29,9 +25,7 @@ export type ShellEnvFallbackOptions = {
   exec?: typeof execFileSync;
 };
 
-export function loadShellEnvFallback(
-  opts: ShellEnvFallbackOptions,
-): ShellEnvFallbackResult {
+export function loadShellEnvFallback(opts: ShellEnvFallbackOptions): ShellEnvFallbackResult {
   const logger = opts.logger ?? console;
   const exec = opts.exec ?? execFileSync;
 
@@ -40,9 +34,7 @@ export function loadShellEnvFallback(
     return { ok: true, applied: [], skippedReason: "disabled" };
   }
 
-  const hasAnyKey = opts.expectedKeys.some((key) =>
-    Boolean(opts.env[key]?.trim()),
-  );
+  const hasAnyKey = opts.expectedKeys.some((key) => Boolean(opts.env[key]?.trim()));
   if (hasAnyKey) {
     lastAppliedKeys = [];
     return { ok: true, applied: [], skippedReason: "already-has-keys" };
@@ -97,12 +89,14 @@ export function loadShellEnvFallback(
 }
 
 export function shouldEnableShellEnvFallback(env: NodeJS.ProcessEnv): boolean {
-  return isTruthy(env.CLAWDBOT_LOAD_SHELL_ENV);
+  return isTruthyEnvValue(env.CLAWDBOT_LOAD_SHELL_ENV);
 }
 
-export function resolveShellEnvFallbackTimeoutMs(
-  env: NodeJS.ProcessEnv,
-): number {
+export function shouldDeferShellEnvFallback(env: NodeJS.ProcessEnv): boolean {
+  return isTruthyEnvValue(env.CLAWDBOT_DEFER_SHELL_ENV_FALLBACK);
+}
+
+export function resolveShellEnvFallbackTimeoutMs(env: NodeJS.ProcessEnv): number {
   const raw = env.CLAWDBOT_SHELL_ENV_TIMEOUT_MS?.trim();
   if (!raw) return DEFAULT_TIMEOUT_MS;
   const parsed = Number.parseInt(raw, 10);

@@ -17,6 +17,16 @@ An **agent** is a fully scoped brain with its own:
 - **State directory** (`agentDir`) for auth profiles, model registry, and per-agent config.
 - **Session store** (chat history + routing state) under `~/.clawdbot/agents/<agentId>/sessions`.
 
+Auth profiles are **per-agent**. Each agent reads from its own:
+
+```
+~/.clawdbot/agents/<agentId>/agent/auth-profiles.json
+```
+
+Main agent credentials are **not** shared automatically. Never reuse `agentDir`
+across agents (it causes auth/session collisions). If you want to share creds,
+copy `auth-profiles.json` into the other agent's `agentDir`.
+
 Skills are per-agent via each workspace’s `skills/` folder, with shared skills
 available from `~/.clawdbot/skills`. See [Skills: per-agent vs shared](/tools/skills#per-agent-vs-shared-skills).
 
@@ -282,6 +292,9 @@ Starting with v2026.1.6, each agent can have its own sandbox and tool restrictio
   },
 }
 ```
+
+Note: `setupCommand` lives under `sandbox.docker` and runs once on container creation.
+Per-agent `sandbox.docker.*` overrides are ignored when the resolved scope is `"shared"`.
 
 **Benefits:**
 - **Security isolation**: Restrict tools for untrusted agents

@@ -1,16 +1,16 @@
-export type BridgeBindMode = "auto" | "lan" | "loopback" | "custom";
+export type GatewayBindMode = "auto" | "lan" | "loopback" | "custom";
 
-export type BridgeConfig = {
+export type GatewayTlsConfig = {
+  /** Enable TLS for the gateway server. */
   enabled?: boolean;
-  port?: number;
-  /**
-   * Bind address policy for the node bridge server.
-   * - auto: Tailnet IPv4 if available, else 0.0.0.0 (fallback to all interfaces)
-   * - lan: 0.0.0.0 (all interfaces, no fallback)
-   * - loopback: 127.0.0.1 (local-only)
-   * - custom: User-specified IP, fallback to 0.0.0.0 if unavailable (requires customBindHost on gateway)
-   */
-  bind?: BridgeBindMode;
+  /** Auto-generate a self-signed cert if cert/key are missing (default: true). */
+  autoGenerate?: boolean;
+  /** PEM certificate path for the gateway server. */
+  certPath?: string;
+  /** PEM private key path for the gateway server. */
+  keyPath?: string;
+  /** Optional PEM CA bundle for TLS clients (mTLS or custom roots). */
+  caPath?: string;
 };
 
 export type WideAreaDiscoveryConfig = {
@@ -113,6 +113,7 @@ export type GatewayHttpConfig = {
   endpoints?: GatewayHttpEndpointsConfig;
 };
 
+
 export type GatewayConfig = {
   /** Single multiplexed port for Gateway WS + HTTP (default: 18789). */
   port?: number;
@@ -129,7 +130,7 @@ export type GatewayConfig = {
    * - custom: User-specified IP, fallback to 0.0.0.0 if unavailable (requires customBindHost)
    * Default: loopback (127.0.0.1).
    */
-  bind?: BridgeBindMode;
+  bind?: GatewayBindMode;
   /** Custom IP address for bind="custom" mode. Fallback: 0.0.0.0. */
   customBindHost?: string;
   controlUi?: GatewayControlUiConfig;
@@ -137,5 +138,6 @@ export type GatewayConfig = {
   tailscale?: GatewayTailscaleConfig;
   remote?: GatewayRemoteConfig;
   reload?: GatewayReloadConfig;
+  tls?: GatewayTlsConfig;
   http?: GatewayHttpConfig;
 };

@@ -1,15 +1,18 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
 
 import type { ClawdbotConfig } from "../config/config.js";
 import type { GatewayRequestHandler } from "../gateway/server-methods/types.js";
-import { createSubsystemLogger } from "../logging.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveUserPath } from "../utils.js";
 import { discoverClawdbotPlugins } from "./discovery.js";
-import {
-  createPluginRegistry,
-  type PluginRecord,
-  type PluginRegistry,
-} from "./registry.js";
+import { initializeGlobalHookRunner } from "./hook-runner-global.js";
+import { createPluginRegistry, type PluginRecord, type PluginRegistry } from "./registry.js";
+import { createPluginRuntime } from "./runtime/index.js";
+import { setActivePluginRegistry } from "./runtime.js";
+import { defaultSlotIdForKey } from "./slots.js";
 import type {
   ClawdbotPluginConfigSchema,
   ClawdbotPluginDefinition,
@@ -27,6 +30,7 @@ export type PluginLoadOptions = {
   logger?: PluginLogger;
   coreGatewayHandlers?: Record<string, GatewayRequestHandler>;
   cache?: boolean;
+  mode?: "full" | "validate";
 };
 
 type NormalizedPluginsConfig = {
@@ -34,26 +38,32 @@ type NormalizedPluginsConfig = {
   allow: string[];
   deny: string[];
   loadPaths: string[];
-  entries: Record<
-    string,
-    { enabled?: boolean; config?: Record<string, unknown> }
-  >;
+  slots: {
+    memory?: string | null;
+  };
+  entries: Record<string, { enabled?: boolean; config?: Record<string, unknown> }>;
 };
 
 const registryCache = new Map<string, PluginRegistry>();
 
 const defaultLogger = () => createSubsystemLogger("plugins");
 
+const BUNDLED_ENABLED_BY_DEFAULT = new Set<string>();
+
 const normalizeList = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
-  return value
-    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
-    .filter(Boolean);
+  return value.map((entry) => (typeof entry === "string" ? entry.trim() : "")).filter(Boolean);
 };
 
-const normalizePluginEntries = (
-  entries: unknown,
-): NormalizedPluginsConfig["entries"] => {
+const normalizeSlotValue = (value: unknown): string | null | undefined => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.toLowerCase() === "none") return null;
+  return trimmed;
+};
+
+const normalizePluginEntries = (entries: unknown): NormalizedPluginsConfig["entries"] => {
   if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
     return {};
   }
@@ -68,9 +78,7 @@ const normalizePluginEntries = (
     normalized[key] = {
       enabled: typeof entry.enabled === "boolean" ? entry.enabled : undefined,
       config:
-        entry.config &&
-        typeof entry.config === "object" &&
-        !Array.isArray(entry.config)
+        entry.config && typeof entry.config === "object" && !Array.isArray(entry.config)
           ? (entry.config as Record<string, unknown>)
           : undefined,
     };
@@ -78,30 +86,82 @@ const normalizePluginEntries = (
   return normalized;
 };
 
-const normalizePluginsConfig = (
-  config?: ClawdbotConfig["plugins"],
-): NormalizedPluginsConfig => {
+const normalizePluginsConfig = (config?: ClawdbotConfig["plugins"]): NormalizedPluginsConfig => {
+  const memorySlot = normalizeSlotValue(config?.slots?.memory);
   return {
     enabled: config?.enabled !== false,
     allow: normalizeList(config?.allow),
     deny: normalizeList(config?.deny),
     loadPaths: normalizeList(config?.load?.paths),
+    slots: {
+      memory: memorySlot ?? defaultSlotIdForKey("memory"),
+    },
     entries: normalizePluginEntries(config?.entries),
   };
+};
+
+const resolvePluginSdkAlias = (): string | null => {
+  try {
+    const preferDist = process.env.VITEST || process.env.NODE_ENV === "test";
+    let cursor = path.dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 6; i += 1) {
+      const srcCandidate = path.join(cursor, "src", "plugin-sdk", "index.ts");
+      const distCandidate = path.join(cursor, "dist", "plugin-sdk", "index.js");
+      const orderedCandidates = preferDist
+        ? [distCandidate, srcCandidate]
+        : [srcCandidate, distCandidate];
+      for (const candidate of orderedCandidates) {
+        if (fs.existsSync(candidate)) return candidate;
+      }
+      const parent = path.dirname(cursor);
+      if (parent === cursor) break;
+      cursor = parent;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
 };
 
 function buildCacheKey(params: {
   workspaceDir?: string;
   plugins: NormalizedPluginsConfig;
 }): string {
-  const workspaceKey = params.workspaceDir
-    ? resolveUserPath(params.workspaceDir)
-    : "";
+  const workspaceKey = params.workspaceDir ? resolveUserPath(params.workspaceDir) : "";
   return `${workspaceKey}::${JSON.stringify(params.plugins)}`;
+}
+
+function resolveMemorySlotDecision(params: {
+  id: string;
+  kind?: string;
+  slot: string | null | undefined;
+  selectedId: string | null;
+}): { enabled: boolean; reason?: string; selected?: boolean } {
+  if (params.kind !== "memory") return { enabled: true };
+  if (params.slot === null) {
+    return { enabled: false, reason: "memory slot disabled" };
+  }
+  if (typeof params.slot === "string") {
+    if (params.slot === params.id) {
+      return { enabled: true, selected: true };
+    }
+    return {
+      enabled: false,
+      reason: `memory slot set to "${params.slot}"`,
+    };
+  }
+  if (params.selectedId && params.selectedId !== params.id) {
+    return {
+      enabled: false,
+      reason: `memory slot already filled by "${params.selectedId}"`,
+    };
+  }
+  return { enabled: true, selected: true };
 }
 
 function resolveEnableState(
   id: string,
+  origin: PluginRecord["origin"],
   config: NormalizedPluginsConfig,
 ): { enabled: boolean; reason?: string } {
   if (!config.enabled) {
@@ -113,9 +173,21 @@ function resolveEnableState(
   if (config.allow.length > 0 && !config.allow.includes(id)) {
     return { enabled: false, reason: "not in allowlist" };
   }
+  if (config.slots.memory === id) {
+    return { enabled: true };
+  }
   const entry = config.entries[id];
+  if (entry?.enabled === true) {
+    return { enabled: true };
+  }
   if (entry?.enabled === false) {
     return { enabled: false, reason: "disabled in config" };
+  }
+  if (origin === "bundled" && BUNDLED_ENABLED_BY_DEFAULT.has(id)) {
+    return { enabled: true };
+  }
+  if (origin === "bundled") {
+    return { enabled: false, reason: "bundled (disabled by default)" };
   }
   return { enabled: true };
 }
@@ -205,26 +277,28 @@ function createPluginRecord(params: {
     enabled: params.enabled,
     status: params.enabled ? "loaded" : "disabled",
     toolNames: [],
+    hookNames: [],
+    channelIds: [],
+    providerIds: [],
     gatewayMethods: [],
     cliCommands: [],
     services: [],
+    httpHandlers: 0,
+    hookCount: 0,
     configSchema: params.configSchema,
     configUiHints: undefined,
+    configJsonSchema: undefined,
   };
 }
 
-function pushDiagnostics(
-  diagnostics: PluginDiagnostic[],
-  append: PluginDiagnostic[],
-) {
+function pushDiagnostics(diagnostics: PluginDiagnostic[], append: PluginDiagnostic[]) {
   diagnostics.push(...append);
 }
 
-export function loadClawdbotPlugins(
-  options: PluginLoadOptions = {},
-): PluginRegistry {
+export function loadClawdbotPlugins(options: PluginLoadOptions = {}): PluginRegistry {
   const cfg = options.config ?? {};
   const logger = options.logger ?? defaultLogger();
+  const validateOnly = options.mode === "validate";
   const normalized = normalizePluginsConfig(cfg.plugins);
   const cacheKey = buildCacheKey({
     workspaceDir: options.workspaceDir,
@@ -233,15 +307,17 @@ export function loadClawdbotPlugins(
   const cacheEnabled = options.cache !== false;
   if (cacheEnabled) {
     const cached = registryCache.get(cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      setActivePluginRegistry(cached, cacheKey);
+      return cached;
+    }
   }
 
+  const runtime = createPluginRuntime();
   const { registry, createApi } = createPluginRegistry({
     logger,
-    coreGatewayHandlers: options.coreGatewayHandlers as Record<
-      string,
-      GatewayRequestHandler
-    >,
+    runtime,
+    coreGatewayHandlers: options.coreGatewayHandlers as Record<string, GatewayRequestHandler>,
   });
 
   const discovery = discoverClawdbotPlugins({
@@ -250,12 +326,39 @@ export function loadClawdbotPlugins(
   });
   pushDiagnostics(registry.diagnostics, discovery.diagnostics);
 
+  const pluginSdkAlias = resolvePluginSdkAlias();
   const jiti = createJiti(import.meta.url, {
     interopDefault: true,
+    extensions: [".ts", ".tsx", ".mts", ".cts", ".mtsx", ".ctsx", ".js", ".mjs", ".cjs", ".json"],
+    ...(pluginSdkAlias ? { alias: { "clawdbot/plugin-sdk": pluginSdkAlias } } : {}),
   });
 
+  const seenIds = new Map<string, PluginRecord["origin"]>();
+  const memorySlot = normalized.slots.memory;
+  let selectedMemoryPluginId: string | null = null;
+  let memorySlotMatched = false;
+
   for (const candidate of discovery.candidates) {
-    const enableState = resolveEnableState(candidate.idHint, normalized);
+    const existingOrigin = seenIds.get(candidate.idHint);
+    if (existingOrigin) {
+      const record = createPluginRecord({
+        id: candidate.idHint,
+        name: candidate.packageName ?? candidate.idHint,
+        description: candidate.packageDescription,
+        version: candidate.packageVersion,
+        source: candidate.source,
+        origin: candidate.origin,
+        workspaceDir: candidate.workspaceDir,
+        enabled: false,
+        configSchema: false,
+      });
+      record.status = "disabled";
+      record.error = `overridden by ${existingOrigin} plugin`;
+      registry.plugins.push(record);
+      continue;
+    }
+
+    const enableState = resolveEnableState(candidate.idHint, candidate.origin, normalized);
     const entry = normalized.entries[candidate.idHint];
     const record = createPluginRecord({
       id: candidate.idHint,
@@ -273,6 +376,7 @@ export function loadClawdbotPlugins(
       record.status = "disabled";
       record.error = enableState.reason;
       registry.plugins.push(record);
+      seenIds.set(candidate.idHint, candidate.origin);
       continue;
     }
 
@@ -280,9 +384,11 @@ export function loadClawdbotPlugins(
     try {
       mod = jiti(candidate.source) as ClawdbotPluginModule;
     } catch (err) {
+      logger.error(`[plugins] ${record.id} failed to load from ${record.source}: ${String(err)}`);
       record.status = "error";
       record.error = String(err);
       registry.plugins.push(record);
+      seenIds.set(candidate.idHint, candidate.origin);
       registry.diagnostics.push({
         level: "error",
         pluginId: record.id,
@@ -308,29 +414,37 @@ export function loadClawdbotPlugins(
     record.name = definition?.name ?? record.name;
     record.description = definition?.description ?? record.description;
     record.version = definition?.version ?? record.version;
+    record.kind = definition?.kind;
     record.configSchema = Boolean(definition?.configSchema);
     record.configUiHints =
       definition?.configSchema &&
       typeof definition.configSchema === "object" &&
       (definition.configSchema as { uiHints?: unknown }).uiHints &&
-      typeof (definition.configSchema as { uiHints?: unknown }).uiHints ===
-        "object" &&
+      typeof (definition.configSchema as { uiHints?: unknown }).uiHints === "object" &&
       !Array.isArray((definition.configSchema as { uiHints?: unknown }).uiHints)
         ? ((definition.configSchema as { uiHints?: unknown }).uiHints as Record<
             string,
             PluginConfigUiHint
           >)
         : undefined;
+    record.configJsonSchema =
+      definition?.configSchema &&
+      typeof definition.configSchema === "object" &&
+      (definition.configSchema as { jsonSchema?: unknown }).jsonSchema &&
+      typeof (definition.configSchema as { jsonSchema?: unknown }).jsonSchema === "object" &&
+      !Array.isArray((definition.configSchema as { jsonSchema?: unknown }).jsonSchema)
+        ? ((definition.configSchema as { jsonSchema?: unknown }).jsonSchema as Record<
+            string,
+            unknown
+          >)
+        : undefined;
 
-    const validatedConfig = validatePluginConfig({
-      schema: definition?.configSchema,
-      value: entry?.config,
-    });
-
-    if (!validatedConfig.ok) {
+    if (!definition?.configSchema) {
+      logger.error(`[plugins] ${record.id} missing config schema`);
       record.status = "error";
-      record.error = `invalid config: ${validatedConfig.errors?.join(", ")}`;
+      record.error = "missing config schema";
       registry.plugins.push(record);
+      seenIds.set(candidate.idHint, candidate.origin);
       registry.diagnostics.push({
         level: "error",
         pluginId: record.id,
@@ -340,10 +454,62 @@ export function loadClawdbotPlugins(
       continue;
     }
 
+    if (record.kind === "memory" && memorySlot === record.id) {
+      memorySlotMatched = true;
+    }
+
+    const memoryDecision = resolveMemorySlotDecision({
+      id: record.id,
+      kind: record.kind,
+      slot: memorySlot,
+      selectedId: selectedMemoryPluginId,
+    });
+
+    if (!memoryDecision.enabled) {
+      record.enabled = false;
+      record.status = "disabled";
+      record.error = memoryDecision.reason;
+      registry.plugins.push(record);
+      seenIds.set(candidate.idHint, candidate.origin);
+      continue;
+    }
+
+    if (memoryDecision.selected && record.kind === "memory") {
+      selectedMemoryPluginId = record.id;
+    }
+
+    const validatedConfig = validatePluginConfig({
+      schema: definition?.configSchema,
+      value: entry?.config,
+    });
+
+    if (!validatedConfig.ok) {
+      logger.error(`[plugins] ${record.id} invalid config: ${validatedConfig.errors?.join(", ")}`);
+      record.status = "error";
+      record.error = `invalid config: ${validatedConfig.errors?.join(", ")}`;
+      registry.plugins.push(record);
+      seenIds.set(candidate.idHint, candidate.origin);
+      registry.diagnostics.push({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: record.error,
+      });
+      continue;
+    }
+
+    if (validateOnly) {
+      registry.plugins.push(record);
+      seenIds.set(candidate.idHint, candidate.origin);
+      continue;
+    }
+
     if (typeof register !== "function") {
+      logger.error(`[plugins] ${record.id} missing register/activate export`);
       record.status = "error";
       record.error = "plugin export missing register/activate";
       registry.plugins.push(record);
+      seenIds.set(candidate.idHint, candidate.origin);
       registry.diagnostics.push({
         level: "error",
         pluginId: record.id,
@@ -365,15 +531,19 @@ export function loadClawdbotPlugins(
           level: "warn",
           pluginId: record.id,
           source: record.source,
-          message:
-            "plugin register returned a promise; async registration is ignored",
+          message: "plugin register returned a promise; async registration is ignored",
         });
       }
       registry.plugins.push(record);
+      seenIds.set(candidate.idHint, candidate.origin);
     } catch (err) {
+      logger.error(
+        `[plugins] ${record.id} failed during register from ${record.source}: ${String(err)}`,
+      );
       record.status = "error";
       record.error = String(err);
       registry.plugins.push(record);
+      seenIds.set(candidate.idHint, candidate.origin);
       registry.diagnostics.push({
         level: "error",
         pluginId: record.id,
@@ -383,8 +553,17 @@ export function loadClawdbotPlugins(
     }
   }
 
+  if (typeof memorySlot === "string" && !memorySlotMatched) {
+    registry.diagnostics.push({
+      level: "warn",
+      message: `memory slot plugin not found or not marked as memory: ${memorySlot}`,
+    });
+  }
+
   if (cacheEnabled) {
     registryCache.set(cacheKey, registry);
   }
+  setActivePluginRegistry(registry, cacheKey);
+  initializeGlobalHookRunner(registry);
   return registry;
 }

@@ -3,11 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withTempHome as withTempHomeBase } from "../../test/helpers/temp-home.js";
 import { loadModelCatalog } from "../agents/model-catalog.js";
 import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
-import {
-  loadSessionStore,
-  resolveSessionKey,
-  saveSessionStore,
-} from "../config/sessions.js";
+import { loadSessionStore, resolveSessionKey, saveSessionStore } from "../config/sessions.js";
 import { getReplyFromConfig } from "./reply.js";
 
 const MAIN_SESSION_KEY = "agent:main:main";
@@ -16,8 +12,7 @@ vi.mock("../agents/pi-embedded.js", () => ({
   abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
   runEmbeddedPiAgent: vi.fn(),
   queueEmbeddedPiMessage: vi.fn().mockReturnValue(false),
-  resolveEmbeddedSessionLane: (key: string) =>
-    `session:${key.trim() || "main"}`,
+  resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
   isEmbeddedPiRunActive: vi.fn().mockReturnValue(false),
   isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),
 }));
@@ -114,9 +109,7 @@ describe("directive behavior", () => {
         },
       );
 
-      const texts = (Array.isArray(res) ? res : [res])
-        .map((entry) => entry?.text)
-        .filter(Boolean);
+      const texts = (Array.isArray(res) ? res : [res]).map((entry) => entry?.text).filter(Boolean);
       expect(texts).toContain("done");
       expect(runEmbeddedPiAgent).toHaveBeenCalledOnce();
     });
@@ -160,7 +153,7 @@ describe("directive behavior", () => {
       });
 
       await getReplyFromConfig(
-        { Body: "/verbose on", From: ctx.From, To: ctx.To },
+        { Body: "/verbose on", From: ctx.From, To: ctx.To, CommandAuthorized: true },
         {},
         {
           agents: {
@@ -189,9 +182,7 @@ describe("directive behavior", () => {
         },
       );
 
-      const texts = (Array.isArray(res) ? res : [res])
-        .map((entry) => entry?.text)
-        .filter(Boolean);
+      const texts = (Array.isArray(res) ? res : [res]).map((entry) => entry?.text).filter(Boolean);
       expect(texts).toContain("done");
       expect(runEmbeddedPiAgent).toHaveBeenCalledOnce();
     });
@@ -202,7 +193,7 @@ describe("directive behavior", () => {
       const storePath = path.join(home, "sessions.json");
 
       const res = await getReplyFromConfig(
-        { Body: "/model", From: "+1222", To: "+1222" },
+        { Body: "/model", From: "+1222", To: "+1222", CommandAuthorized: true },
         {},
         {
           agents: {
@@ -222,7 +213,7 @@ describe("directive behavior", () => {
       const text = Array.isArray(res) ? res[0]?.text : res?.text;
       expect(text).toContain("anthropic/claude-opus-4-5");
       expect(text).toContain("Pick: /model <#> or /model <provider/model>");
-      expect(text).toContain("gpt-4.1-mini — openai");
+      expect(text).toContain("openai/gpt-4.1-mini");
       expect(text).not.toContain("claude-sonnet-4-1");
       expect(runEmbeddedPiAgent).not.toHaveBeenCalled();
     });
@@ -233,7 +224,7 @@ describe("directive behavior", () => {
       const storePath = path.join(home, "sessions.json");
 
       const res = await getReplyFromConfig(
-        { Body: "/model status", From: "+1222", To: "+1222" },
+        { Body: "/model status", From: "+1222", To: "+1222", CommandAuthorized: true },
         {},
         {
           agents: {

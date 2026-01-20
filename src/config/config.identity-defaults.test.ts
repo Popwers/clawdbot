@@ -149,9 +149,7 @@ describe("config identity defaults", () => {
       const cfg = loadConfig();
 
       expect(cfg.messages?.responsePrefix).toBe("✅");
-      expect(cfg.agents?.list?.[0]?.groupChat?.mentionPatterns).toEqual([
-        "@clawd",
-      ]);
+      expect(cfg.agents?.list?.[0]?.groupChat?.mentionPatterns).toEqual(["@clawd"]);
     });
   });
 
@@ -166,8 +164,6 @@ describe("config identity defaults", () => {
             messages: {
               messagePrefix: "[clawdbot]",
               responsePrefix: "🦞",
-              // legacy field should be ignored (moved to providers)
-              textChunkLimit: 9999,
             },
             channels: {
               whatsapp: { allowFrom: ["+15555550123"], textChunkLimit: 4444 },
@@ -198,8 +194,7 @@ describe("config identity defaults", () => {
       expect(cfg.channels?.signal?.textChunkLimit).toBe(2222);
       expect(cfg.channels?.imessage?.textChunkLimit).toBe(1111);
 
-      const legacy = (cfg.messages as unknown as Record<string, unknown>)
-        .textChunkLimit;
+      const legacy = (cfg.messages as unknown as Record<string, unknown>).textChunkLimit;
       expect(legacy).toBeUndefined();
     });
   });
@@ -249,9 +244,7 @@ describe("config identity defaults", () => {
       const { loadConfig } = await import("./config.js");
       const cfg = loadConfig();
 
-      expect(cfg.models?.providers?.minimax?.baseUrl).toBe(
-        "https://api.minimax.io/anthropic",
-      );
+      expect(cfg.models?.providers?.minimax?.baseUrl).toBe("https://api.minimax.io/anthropic");
     });
   });
 

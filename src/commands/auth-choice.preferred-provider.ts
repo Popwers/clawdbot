@@ -11,21 +11,24 @@ const PREFERRED_PROVIDER_BY_AUTH_CHOICE: Partial<Record<AuthChoice, string>> = {
   chutes: "chutes",
   "openai-api-key": "openai",
   "openrouter-api-key": "openrouter",
+  "ai-gateway-api-key": "vercel-ai-gateway",
   "moonshot-api-key": "moonshot",
+  "kimi-code-api-key": "kimi-code",
   "gemini-api-key": "google",
+  "google-antigravity": "google-antigravity",
+  "google-gemini-cli": "google-gemini-cli",
   "zai-api-key": "zai",
-  antigravity: "google-antigravity",
   "synthetic-api-key": "synthetic",
   "github-copilot": "github-copilot",
+  "copilot-proxy": "copilot-proxy",
   "minimax-cloud": "minimax",
   "minimax-api": "minimax",
   "minimax-api-lightning": "minimax",
   minimax: "lmstudio",
   "opencode-zen": "opencode",
+  "qwen-portal": "qwen-portal",
 };
 
-export function resolvePreferredProviderForAuthChoice(
-  choice: AuthChoice,
-): string | undefined {
+export function resolvePreferredProviderForAuthChoice(choice: AuthChoice): string | undefined {
   return PREFERRED_PROVIDER_BY_AUTH_CHOICE[choice];
 }

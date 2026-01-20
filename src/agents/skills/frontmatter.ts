@@ -1,38 +1,18 @@
+import JSON5 from "json5";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 
+import { parseFrontmatterBlock } from "../../markdown/frontmatter.js";
+import { parseBooleanValue } from "../../utils/boolean.js";
 import type {
   ClawdbotSkillMetadata,
   ParsedSkillFrontmatter,
   SkillEntry,
   SkillInstallSpec,
+  SkillInvocationPolicy,
 } from "./types.js";
 
-function stripQuotes(value: string): string {
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    return value.slice(1, -1);
-  }
-  return value;
-}
-
 export function parseFrontmatter(content: string): ParsedSkillFrontmatter {
-  const frontmatter: ParsedSkillFrontmatter = {};
-  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  if (!normalized.startsWith("---")) return frontmatter;
-  const endIndex = normalized.indexOf("\n---", 3);
-  if (endIndex === -1) return frontmatter;
-  const block = normalized.slice(4, endIndex);
-  for (const line of block.split("\n")) {
-    const match = line.match(/^([\w-]+):\s*(.*)$/);
-    if (!match) continue;
-    const key = match[1];
-    const value = stripQuotes(match[2].trim());
-    if (!key || !value) continue;
-    frontmatter[key] = value;
-  }
-  return frontmatter;
+  return parseFrontmatterBlock(content);
 }
 
 function normalizeStringList(input: unknown): string[] {
@@ -53,11 +33,7 @@ function parseInstallSpec(input: unknown): SkillInstallSpec | undefined {
   if (!input || typeof input !== "object") return undefined;
   const raw = input as Record<string, unknown>;
   const kindRaw =
-    typeof raw.kind === "string"
-      ? raw.kind
-      : typeof raw.type === "string"
-        ? raw.type
-        : "";
+    typeof raw.kind === "string" ? raw.kind : typeof raw.type === "string" ? raw.type : "";
   const kind = kindRaw.trim().toLowerCase();
   if (kind !== "brew" && kind !== "node" && kind !== "go" && kind !== "uv") {
     return undefined;
@@ -78,12 +54,14 @@ function parseInstallSpec(input: unknown): SkillInstallSpec | undefined {
   return spec;
 }
 
-function getFrontmatterValue(
-  frontmatter: ParsedSkillFrontmatter,
-  key: string,
-): string | undefined {
+function getFrontmatterValue(frontmatter: ParsedSkillFrontmatter, key: string): string | undefined {
   const raw = frontmatter[key];
   return typeof raw === "string" ? raw : undefined;
+}
+
+function parseFrontmatterBool(value: string | undefined, fallback: boolean): boolean {
+  const parsed = parseBooleanValue(value);
+  return parsed === undefined ? fallback : parsed;
 }
 
 export function resolveClawdbotMetadata(
@@ -92,7 +70,7 @@ export function resolveClawdbotMetadata(
   const raw = getFrontmatterValue(frontmatter, "metadata");
   if (!raw) return undefined;
   try {
-    const parsed = JSON.parse(raw) as { clawdbot?: unknown };
+    const parsed = JSON5.parse(raw) as { clawdbot?: unknown };
     if (!parsed || typeof parsed !== "object") return undefined;
     const clawdbot = (parsed as { clawdbot?: unknown }).clawdbot;
     if (!clawdbot || typeof clawdbot !== "object") return undefined;
@@ -101,32 +79,17 @@ export function resolveClawdbotMetadata(
       typeof clawdbotObj.requires === "object" && clawdbotObj.requires !== null
         ? (clawdbotObj.requires as Record<string, unknown>)
         : undefined;
-    const installRaw = Array.isArray(clawdbotObj.install)
-      ? (clawdbotObj.install as unknown[])
-      : [];
+    const installRaw = Array.isArray(clawdbotObj.install) ? (clawdbotObj.install as unknown[]) : [];
     const install = installRaw
       .map((entry) => parseInstallSpec(entry))
       .filter((entry): entry is SkillInstallSpec => Boolean(entry));
     const osRaw = normalizeStringList(clawdbotObj.os);
     return {
-      always:
-        typeof clawdbotObj.always === "boolean"
-          ? clawdbotObj.always
-          : undefined,
-      emoji:
-        typeof clawdbotObj.emoji === "string" ? clawdbotObj.emoji : undefined,
-      homepage:
-        typeof clawdbotObj.homepage === "string"
-          ? clawdbotObj.homepage
-          : undefined,
-      skillKey:
-        typeof clawdbotObj.skillKey === "string"
-          ? clawdbotObj.skillKey
-          : undefined,
-      primaryEnv:
-        typeof clawdbotObj.primaryEnv === "string"
-          ? clawdbotObj.primaryEnv
-          : undefined,
+      always: typeof clawdbotObj.always === "boolean" ? clawdbotObj.always : undefined,
+      emoji: typeof clawdbotObj.emoji === "string" ? clawdbotObj.emoji : undefined,
+      homepage: typeof clawdbotObj.homepage === "string" ? clawdbotObj.homepage : undefined,
+      skillKey: typeof clawdbotObj.skillKey === "string" ? clawdbotObj.skillKey : undefined,
+      primaryEnv: typeof clawdbotObj.primaryEnv === "string" ? clawdbotObj.primaryEnv : undefined,
       os: osRaw.length > 0 ? osRaw : undefined,
       requires: requiresRaw
         ? {
@@ -141,6 +104,18 @@ export function resolveClawdbotMetadata(
   } catch {
     return undefined;
   }
+}
+
+export function resolveSkillInvocationPolicy(
+  frontmatter: ParsedSkillFrontmatter,
+): SkillInvocationPolicy {
+  return {
+    userInvocable: parseFrontmatterBool(getFrontmatterValue(frontmatter, "user-invocable"), true),
+    disableModelInvocation: parseFrontmatterBool(
+      getFrontmatterValue(frontmatter, "disable-model-invocation"),
+      false,
+    ),
+  };
 }
 
 export function resolveSkillKey(skill: Skill, entry?: SkillEntry): string {

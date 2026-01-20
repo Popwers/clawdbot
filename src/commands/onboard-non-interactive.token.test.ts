@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 describe("onboard (non-interactive): token auth", () => {
   it("writes token profile config and stores the token", async () => {
@@ -25,12 +25,11 @@ describe("onboard (non-interactive): token auth", () => {
     delete process.env.CLAWDBOT_GATEWAY_TOKEN;
     delete process.env.CLAWDBOT_GATEWAY_PASSWORD;
 
-    const tempHome = await fs.mkdtemp(
-      path.join(os.tmpdir(), "clawdbot-onboard-token-"),
-    );
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "clawdbot-onboard-token-"));
     process.env.HOME = tempHome;
-    delete process.env.CLAWDBOT_STATE_DIR;
-    delete process.env.CLAWDBOT_CONFIG_PATH;
+    process.env.CLAWDBOT_STATE_DIR = tempHome;
+    process.env.CLAWDBOT_CONFIG_PATH = path.join(tempHome, "clawdbot.json");
+    vi.resetModules();
 
     const token = `sk-ant-oat01-${"a".repeat(80)}`;
 
@@ -45,9 +44,7 @@ describe("onboard (non-interactive): token auth", () => {
     };
 
     try {
-      const { runNonInteractiveOnboarding } = await import(
-        "./onboard-non-interactive.js"
-      );
+      const { runNonInteractiveOnboarding } = await import("./onboard-non-interactive.js");
       await runNonInteractiveOnboarding(
         {
           nonInteractive: true,
@@ -63,22 +60,16 @@ describe("onboard (non-interactive): token auth", () => {
       );
 
       const { CONFIG_PATH_CLAWDBOT } = await import("../config/config.js");
-      const cfg = JSON.parse(
-        await fs.readFile(CONFIG_PATH_CLAWDBOT, "utf8"),
-      ) as {
+      const cfg = JSON.parse(await fs.readFile(CONFIG_PATH_CLAWDBOT, "utf8")) as {
         auth?: {
           profiles?: Record<string, { provider?: string; mode?: string }>;
         };
       };
 
-      expect(cfg.auth?.profiles?.["anthropic:default"]?.provider).toBe(
-        "anthropic",
-      );
+      expect(cfg.auth?.profiles?.["anthropic:default"]?.provider).toBe("anthropic");
       expect(cfg.auth?.profiles?.["anthropic:default"]?.mode).toBe("token");
 
-      const { ensureAuthProfileStore } = await import(
-        "../agents/auth-profiles.js"
-      );
+      const { ensureAuthProfileStore } = await import("../agents/auth-profiles.js");
       const store = ensureAuthProfileStore();
       const profile = store.profiles["anthropic:default"];
       expect(profile?.type).toBe("token");

@@ -7,7 +7,7 @@ export function registerMessageReadEditDeleteCommands(
 ) {
   helpers
     .withMessageBase(
-      helpers.withMessageTarget(
+      helpers.withRequiredMessageTarget(
         message.command("read").description("Read recent messages"),
       ),
     )
@@ -15,7 +15,6 @@ export function registerMessageReadEditDeleteCommands(
     .option("--before <id>", "Read/search before id")
     .option("--after <id>", "Read/search after id")
     .option("--around <id>", "Read around id")
-    .option("--channel-id <id>", "Channel id (defaults to --to)")
     .option("--include-thread", "Include thread replies (Discord)", false)
     .action(async (opts) => {
       await helpers.runMessageAction("read", opts);
@@ -23,7 +22,7 @@ export function registerMessageReadEditDeleteCommands(
 
   helpers
     .withMessageBase(
-      helpers.withMessageTarget(
+      helpers.withRequiredMessageTarget(
         message
           .command("edit")
           .description("Edit a message")
@@ -31,7 +30,6 @@ export function registerMessageReadEditDeleteCommands(
           .requiredOption("-m, --message <text>", "Message body"),
       ),
     )
-    .option("--channel-id <id>", "Channel id (defaults to --to)")
     .option("--thread-id <id>", "Thread id (Telegram forum thread)")
     .action(async (opts) => {
       await helpers.runMessageAction("edit", opts);
@@ -39,14 +37,13 @@ export function registerMessageReadEditDeleteCommands(
 
   helpers
     .withMessageBase(
-      helpers.withMessageTarget(
+      helpers.withRequiredMessageTarget(
         message
           .command("delete")
           .description("Delete a message")
           .requiredOption("--message-id <id>", "Message id"),
       ),
     )
-    .option("--channel-id <id>", "Channel id (defaults to --to)")
     .action(async (opts) => {
       await helpers.runMessageAction("delete", opts);
     });

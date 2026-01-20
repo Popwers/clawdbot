@@ -4,6 +4,7 @@ import type { ClawdbotConfig } from "../../config/config.js";
 import type { MsgContext } from "../templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import type { ReplyDispatcher } from "./reply-dispatcher.js";
+import { buildTestCtx } from "./test-ctx.js";
 
 const mocks = vi.hoisted(() => ({
   routeReply: vi.fn(async () => ({ ok: true, messageId: "mock" })),
@@ -17,20 +18,20 @@ vi.mock("./route-reply.js", () => ({
   isRoutableChannel: (channel: string | undefined) =>
     Boolean(
       channel &&
-        [
-          "telegram",
-          "slack",
-          "discord",
-          "signal",
-          "imessage",
-          "whatsapp",
-        ].includes(channel),
+      ["telegram", "slack", "discord", "signal", "imessage", "whatsapp"].includes(channel),
     ),
   routeReply: mocks.routeReply,
 }));
 
 vi.mock("./abort.js", () => ({
   tryFastAbortFromMessage: mocks.tryFastAbortFromMessage,
+  formatAbortReplyText: (stoppedSubagents?: number) => {
+    if (typeof stoppedSubagents !== "number" || stoppedSubagents <= 0) {
+      return "⚙️ Agent was aborted.";
+    }
+    const label = stoppedSubagents === 1 ? "sub-agent" : "sub-agents";
+    return `⚙️ Agent was aborted. Stopped ${stoppedSubagents} ${label}.`;
+  },
 }));
 
 const { dispatchReplyFromConfig } = await import("./dispatch-from-config.js");
@@ -58,11 +59,12 @@ describe("dispatchReplyFromConfig", () => {
     mocks.routeReply.mockClear();
     const cfg = {} as ClawdbotConfig;
     const dispatcher = createDispatcher();
-    const ctx: MsgContext = {
+    const ctx = buildTestCtx({
       Provider: "slack",
+      Surface: undefined,
       OriginatingChannel: "slack",
       OriginatingTo: "channel:C123",
-    };
+    });
 
     const replyResolver = async (
       _ctx: MsgContext,
@@ -83,13 +85,13 @@ describe("dispatchReplyFromConfig", () => {
     mocks.routeReply.mockClear();
     const cfg = {} as ClawdbotConfig;
     const dispatcher = createDispatcher();
-    const ctx: MsgContext = {
+    const ctx = buildTestCtx({
       Provider: "slack",
       AccountId: "acc-1",
       MessageThreadId: 123,
       OriginatingChannel: "telegram",
       OriginatingTo: "telegram:999",
-    };
+    });
 
     const replyResolver = async (
       _ctx: MsgContext,
@@ -116,10 +118,10 @@ describe("dispatchReplyFromConfig", () => {
     });
     const cfg = {} as ClawdbotConfig;
     const dispatcher = createDispatcher();
-    const ctx: MsgContext = {
+    const ctx = buildTestCtx({
       Provider: "telegram",
       Body: "/stop",
-    };
+    });
     const replyResolver = vi.fn(async () => ({ text: "hi" }) as ReplyPayload);
 
     await dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
@@ -130,18 +132,43 @@ describe("dispatchReplyFromConfig", () => {
     });
   });
 
+  it("fast-abort reply includes stopped subagent count when provided", async () => {
+    mocks.tryFastAbortFromMessage.mockResolvedValue({
+      handled: true,
+      aborted: true,
+      stoppedSubagents: 2,
+    });
+    const cfg = {} as ClawdbotConfig;
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      Provider: "telegram",
+      Body: "/stop",
+    });
+
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg,
+      dispatcher,
+      replyResolver: vi.fn(async () => ({ text: "hi" }) as ReplyPayload),
+    });
+
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({
+      text: "⚙️ Agent was aborted. Stopped 2 sub-agents.",
+    });
+  });
+
   it("deduplicates inbound messages by MessageSid and origin", async () => {
     mocks.tryFastAbortFromMessage.mockResolvedValue({
       handled: false,
       aborted: false,
     });
     const cfg = {} as ClawdbotConfig;
-    const ctx: MsgContext = {
+    const ctx = buildTestCtx({
       Provider: "whatsapp",
       OriginatingChannel: "whatsapp",
       OriginatingTo: "whatsapp:+15555550123",
       MessageSid: "msg-1",
-    };
+    });
     const replyResolver = vi.fn(async () => ({ text: "hi" }) as ReplyPayload);
 
     await dispatchReplyFromConfig({

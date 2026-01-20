@@ -21,15 +21,13 @@ vi.mock("../config/config.js", async (importOriginal) => {
   };
 });
 
-const { readTelegramAllowFromStore, upsertTelegramPairingRequest } = vi.hoisted(
-  () => ({
-    readTelegramAllowFromStore: vi.fn(async () => [] as string[]),
-    upsertTelegramPairingRequest: vi.fn(async () => ({
-      code: "PAIRCODE",
-      created: true,
-    })),
-  }),
-);
+const { readTelegramAllowFromStore, upsertTelegramPairingRequest } = vi.hoisted(() => ({
+  readTelegramAllowFromStore: vi.fn(async () => [] as string[]),
+  upsertTelegramPairingRequest: vi.fn(async () => ({
+    code: "PAIRCODE",
+    created: true,
+  })),
+}));
 
 vi.mock("./pairing-store.js", () => ({
   readTelegramAllowFromStore,
@@ -144,9 +142,7 @@ describe("createTelegramBot", () => {
 
   it("accepts group messages when mentionPatterns match (without @botUsername)", async () => {
     onSpy.mockReset();
-    const replySpy = replyModule.__replySpy as unknown as ReturnType<
-      typeof vi.fn
-    >;
+    const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
     replySpy.mockReset();
 
     loadConfig.mockReturnValue({
@@ -161,9 +157,7 @@ describe("createTelegramBot", () => {
     });
 
     createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
 
     await handler({
       message: {
@@ -180,15 +174,13 @@ describe("createTelegramBot", () => {
     expect(replySpy).toHaveBeenCalledTimes(1);
     const payload = replySpy.mock.calls[0][0];
     expect(payload.WasMentioned).toBe(true);
-    expect(payload.Body).toMatch(
-      /^\[Telegram Test Group id:7 from Ada id:9 2025-01-09T00:00Z\]/,
-    );
+    expect(payload.SenderName).toBe("Ada");
+    expect(payload.SenderId).toBe("9");
+    expect(payload.Body).toMatch(/^\[Telegram Test Group id:7 (\+\d+[smhd] )?2025-01-09T00:00Z\]/);
   });
-  it("includes sender identity in group envelope headers", async () => {
+  it("keeps group envelope headers stable (sender identity is separate)", async () => {
     onSpy.mockReset();
-    const replySpy = replyModule.__replySpy as unknown as ReturnType<
-      typeof vi.fn
-    >;
+    const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
     replySpy.mockReset();
 
     loadConfig.mockReturnValue({
@@ -201,9 +193,7 @@ describe("createTelegramBot", () => {
     });
 
     createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
 
     await handler({
       message: {
@@ -224,16 +214,15 @@ describe("createTelegramBot", () => {
 
     expect(replySpy).toHaveBeenCalledTimes(1);
     const payload = replySpy.mock.calls[0][0];
-    expect(payload.Body).toMatch(
-      /^\[Telegram Ops id:42 from Ada Lovelace \(@ada\) id:99 2025-01-09T00:00Z\]/,
-    );
+    expect(payload.SenderName).toBe("Ada Lovelace");
+    expect(payload.SenderId).toBe("99");
+    expect(payload.SenderUsername).toBe("ada");
+    expect(payload.Body).toMatch(/^\[Telegram Ops id:42 (\+\d+[smhd] )?2025-01-09T00:00Z\]/);
   });
   it("reacts to mention-gated group messages when ackReaction is enabled", async () => {
     onSpy.mockReset();
     setMessageReactionSpy.mockReset();
-    const replySpy = replyModule.__replySpy as unknown as ReturnType<
-      typeof vi.fn
-    >;
+    const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
     replySpy.mockReset();
 
     loadConfig.mockReturnValue({
@@ -251,9 +240,7 @@ describe("createTelegramBot", () => {
     });
 
     createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
 
     await handler({
       message: {
@@ -267,9 +254,7 @@ describe("createTelegramBot", () => {
       getFile: async () => ({ download: async () => new Uint8Array() }),
     });
 
-    expect(setMessageReactionSpy).toHaveBeenCalledWith(7, 123, [
-      { type: "emoji", emoji: "👀" },
-    ]);
+    expect(setMessageReactionSpy).toHaveBeenCalledWith(7, 123, [{ type: "emoji", emoji: "👀" }]);
   });
   it("clears native commands when disabled", () => {
     loadConfig.mockReturnValue({
@@ -282,9 +267,7 @@ describe("createTelegramBot", () => {
   });
   it("skips group messages when requireMention is enabled and no mention matches", async () => {
     onSpy.mockReset();
-    const replySpy = replyModule.__replySpy as unknown as ReturnType<
-      typeof vi.fn
-    >;
+    const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
     replySpy.mockReset();
 
     loadConfig.mockReturnValue({
@@ -298,9 +281,7 @@ describe("createTelegramBot", () => {
     });
 
     createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
 
     await handler({
       message: {
@@ -318,9 +299,7 @@ describe("createTelegramBot", () => {
   });
   it("allows group messages when requireMention is enabled but mentions cannot be detected", async () => {
     onSpy.mockReset();
-    const replySpy = replyModule.__replySpy as unknown as ReturnType<
-      typeof vi.fn
-    >;
+    const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
     replySpy.mockReset();
 
     loadConfig.mockReturnValue({
@@ -334,9 +313,7 @@ describe("createTelegramBot", () => {
     });
 
     createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
 
     await handler({
       message: {
@@ -357,15 +334,11 @@ describe("createTelegramBot", () => {
   it("includes reply-to context when a Telegram reply is received", async () => {
     onSpy.mockReset();
     sendMessageSpy.mockReset();
-    const replySpy = replyModule.__replySpy as unknown as ReturnType<
-      typeof vi.fn
-    >;
+    const replySpy = replyModule.__replySpy as unknown as ReturnType<typeof vi.fn>;
     replySpy.mockReset();
 
     createTelegramBot({ token: "tok" });
-    const handler = getOnHandler("message") as (
-      ctx: Record<string, unknown>,
-    ) => Promise<void>;
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
 
     await handler({
       message: {

@@ -8,8 +8,7 @@ vi.mock("../agents/pi-embedded.js", () => ({
   compactEmbeddedPiSession: vi.fn(),
   runEmbeddedPiAgent: vi.fn(),
   queueEmbeddedPiMessage: vi.fn().mockReturnValue(false),
-  resolveEmbeddedSessionLane: (key: string) =>
-    `session:${key.trim() || "main"}`,
+  resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
   isEmbeddedPiRunActive: vi.fn().mockReturnValue(false),
   isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),
 }));
@@ -49,10 +48,7 @@ const modelCatalogMocks = vi.hoisted(() => ({
 
 vi.mock("../agents/model-catalog.js", () => modelCatalogMocks);
 
-import {
-  abortEmbeddedPiRun,
-  runEmbeddedPiAgent,
-} from "../agents/pi-embedded.js";
+import { abortEmbeddedPiRun, runEmbeddedPiAgent } from "../agents/pi-embedded.js";
 import { getReplyFromConfig } from "./reply.js";
 
 const MAIN_SESSION_KEY = "agent:main:main";
@@ -127,6 +123,7 @@ describe("trigger handling", () => {
           To: "+2000",
           Provider: "whatsapp",
           SenderE164: "+1000",
+          CommandAuthorized: true,
         },
         {},
         cfg,
@@ -135,10 +132,7 @@ describe("trigger handling", () => {
       expect(text).toContain("Elevated mode enabled");
 
       const storeRaw = await fs.readFile(cfg.session.store, "utf-8");
-      const store = JSON.parse(storeRaw) as Record<
-        string,
-        { elevatedLevel?: string }
-      >;
+      const store = JSON.parse(storeRaw) as Record<string, { elevatedLevel?: string }>;
       expect(store[MAIN_SESSION_KEY]?.elevatedLevel).toBe("on");
     });
   });
@@ -180,10 +174,7 @@ describe("trigger handling", () => {
       expect(text).toContain("tools.elevated.enabled");
 
       const storeRaw = await fs.readFile(cfg.session.store, "utf-8");
-      const store = JSON.parse(storeRaw) as Record<
-        string,
-        { elevatedLevel?: string }
-      >;
+      const store = JSON.parse(storeRaw) as Record<string, { elevatedLevel?: string }>;
       expect(store[MAIN_SESSION_KEY]?.elevatedLevel).toBeUndefined();
     });
   });
@@ -220,7 +211,7 @@ describe("trigger handling", () => {
       const res = await getReplyFromConfig(
         {
           Body: "/elevated on",
-          From: "group:123@g.us",
+          From: "whatsapp:group:123@g.us",
           To: "whatsapp:+2000",
           Provider: "whatsapp",
           SenderE164: "+1000",

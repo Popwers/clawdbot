@@ -32,8 +32,7 @@ vi.mock("node:child_process", async (importOriginal) => {
         dockerArgs[0] === "inspect" &&
         dockerArgs[1] === "-f" &&
         dockerArgs[2] === "{{.State.Running}}";
-      const shouldSucceedImageInspect =
-        dockerArgs[0] === "image" && dockerArgs[1] === "inspect";
+      const shouldSucceedImageInspect = dockerArgs[0] === "image" && dockerArgs[1] === "inspect";
 
       const code = shouldFailContainerInspect ? 1 : 0;
       if (shouldSucceedImageInspect) {
@@ -46,6 +45,13 @@ vi.mock("node:child_process", async (importOriginal) => {
   };
 });
 
+vi.mock("../skills.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../skills.js")>();
+  return {
+    ...actual,
+    syncSkillsToWorkspace: vi.fn(async () => undefined),
+  };
+});
 describe("Agent-specific sandbox config", () => {
   beforeEach(() => {
     spawnCalls.length = 0;

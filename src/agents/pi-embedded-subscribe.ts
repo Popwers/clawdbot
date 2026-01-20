@@ -1,6 +1,8 @@
 import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
 import { formatToolAggregate } from "../auto-reply/tool-meta.js";
-import { createSubsystemLogger } from "../logging.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
+import type { InlineCodeState } from "../markdown/code-spans.js";
+import { buildCodeSpanIndex, createInlineCodeState } from "../markdown/code-spans.js";
 import { EmbeddedBlockChunker } from "./pi-embedded-block-chunker.js";
 import {
   isMessagingToolDuplicateNormalized,
@@ -14,36 +16,35 @@ import type {
 import type { SubscribeEmbeddedPiSessionParams } from "./pi-embedded-subscribe.types.js";
 import { formatReasoningMessage } from "./pi-embedded-utils.js";
 
-const THINKING_TAG_SCAN_RE =
-  /<\s*(\/?)\s*(?:think(?:ing)?|thought|antthinking)\s*>/gi;
+const THINKING_TAG_SCAN_RE = /<\s*(\/?)\s*(?:think(?:ing)?|thought|antthinking)\s*>/gi;
 const FINAL_TAG_SCAN_RE = /<\s*(\/?)\s*final\s*>/gi;
 const log = createSubsystemLogger("agent/embedded");
 
 export type {
   BlockReplyChunking,
   SubscribeEmbeddedPiSessionParams,
+  ToolResultFormat,
 } from "./pi-embedded-subscribe.types.js";
 
-export function subscribeEmbeddedPiSession(
-  params: SubscribeEmbeddedPiSessionParams,
-) {
+export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionParams) {
   const reasoningMode = params.reasoningMode ?? "off";
+  const toolResultFormat = params.toolResultFormat ?? "markdown";
+  const useMarkdown = toolResultFormat === "markdown";
   const state: EmbeddedPiSubscribeState = {
     assistantTexts: [],
     toolMetas: [],
     toolMetaById: new Map(),
     toolSummaryById: new Set(),
+    lastToolError: undefined,
     blockReplyBreak: params.blockReplyBreak ?? "text_end",
     reasoningMode,
     includeReasoning: reasoningMode === "on",
     shouldEmitPartialReplies: !(reasoningMode === "on" && !params.onBlockReply),
-    streamReasoning:
-      reasoningMode === "stream" &&
-      typeof params.onReasoningStream === "function",
+    streamReasoning: reasoningMode === "stream" && typeof params.onReasoningStream === "function",
     deltaBuffer: "",
     blockBuffer: "",
     // Track if a streamed chunk opened a <think> block (stateful across chunks).
-    blockState: { thinking: false, final: false },
+    blockState: { thinking: false, final: false, inlineCode: createInlineCodeState() },
     lastStreamedAssistant: undefined,
     lastStreamedReasoning: undefined,
     lastBlockReplyText: undefined,
@@ -66,8 +67,7 @@ export function subscribeEmbeddedPiSession(
   const toolMetaById = state.toolMetaById;
   const toolSummaryById = state.toolSummaryById;
   const messagingToolSentTexts = state.messagingToolSentTexts;
-  const messagingToolSentTextsNormalized =
-    state.messagingToolSentTextsNormalized;
+  const messagingToolSentTextsNormalized = state.messagingToolSentTextsNormalized;
   const messagingToolSentTargets = state.messagingToolSentTargets;
   const pendingMessagingTexts = state.pendingMessagingTexts;
   const pendingMessagingTargets = state.pendingMessagingTargets;
@@ -78,6 +78,7 @@ export function subscribeEmbeddedPiSession(
     blockChunker?.reset();
     state.blockState.thinking = false;
     state.blockState.final = false;
+    state.blockState.inlineCode = createInlineCodeState();
     state.lastStreamedAssistant = undefined;
     state.lastBlockReplyText = undefined;
     state.lastStreamedReasoning = undefined;
@@ -131,8 +132,7 @@ export function subscribeEmbeddedPiSession(
       messagingToolSentTextsNormalized.splice(0, overflow);
     }
     if (messagingToolSentTargets.length > MAX_MESSAGING_SENT_TARGETS) {
-      const overflow =
-        messagingToolSentTargets.length - MAX_MESSAGING_SENT_TARGETS;
+      const overflow = messagingToolSentTargets.length - MAX_MESSAGING_SENT_TARGETS;
       messagingToolSentTargets.splice(0, overflow);
     }
   };
@@ -169,20 +169,47 @@ export function subscribeEmbeddedPiSession(
   };
 
   const blockChunking = params.blockReplyChunking;
-  const blockChunker = blockChunking
-    ? new EmbeddedBlockChunker(blockChunking)
-    : null;
+  const blockChunker = blockChunking ? new EmbeddedBlockChunker(blockChunking) : null;
   // KNOWN: Provider streams are not strictly once-only or perfectly ordered.
   // `text_end` can repeat full content; late `text_end` can arrive after `message_end`.
   // Tests: `src/agents/pi-embedded-subscribe.test.ts` (e.g. late text_end cases).
   const shouldEmitToolResult = () =>
     typeof params.shouldEmitToolResult === "function"
       ? params.shouldEmitToolResult()
-      : params.verboseLevel === "on";
+      : params.verboseLevel === "on" || params.verboseLevel === "full";
+  const shouldEmitToolOutput = () =>
+    typeof params.shouldEmitToolOutput === "function"
+      ? params.shouldEmitToolOutput()
+      : params.verboseLevel === "full";
+  const formatToolOutputBlock = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return "(no output)";
+    if (!useMarkdown) return trimmed;
+    return `\`\`\`txt\n${trimmed}\n\`\`\``;
+  };
   const emitToolSummary = (toolName?: string, meta?: string) => {
     if (!params.onToolResult) return;
-    const agg = formatToolAggregate(toolName, meta ? [meta] : undefined);
+    const agg = formatToolAggregate(toolName, meta ? [meta] : undefined, {
+      markdown: useMarkdown,
+    });
     const { text: cleanedText, mediaUrls } = parseReplyDirectives(agg);
+    if (!cleanedText && (!mediaUrls || mediaUrls.length === 0)) return;
+    try {
+      void params.onToolResult({
+        text: cleanedText,
+        mediaUrls: mediaUrls?.length ? mediaUrls : undefined,
+      });
+    } catch {
+      // ignore tool result delivery failures
+    }
+  };
+  const emitToolOutput = (toolName?: string, meta?: string, output?: string) => {
+    if (!params.onToolResult || !output) return;
+    const agg = formatToolAggregate(toolName, meta ? [meta] : undefined, {
+      markdown: useMarkdown,
+    });
+    const message = `${agg}\n${formatToolOutputBlock(output)}`;
+    const { text: cleanedText, mediaUrls } = parseReplyDirectives(message);
     if (!cleanedText && (!mediaUrls || mediaUrls.length === 0)) return;
     try {
       void params.onToolResult({
@@ -196,9 +223,12 @@ export function subscribeEmbeddedPiSession(
 
   const stripBlockTags = (
     text: string,
-    state: { thinking: boolean; final: boolean },
+    state: { thinking: boolean; final: boolean; inlineCode?: InlineCodeState },
   ): string => {
     if (!text) return text;
+
+    const inlineStateStart = state.inlineCode ?? createInlineCodeState();
+    const codeSpans = buildCodeSpanIndex(text, inlineStateStart);
 
     // 1. Handle <think> blocks (stateful, strip content inside)
     let processed = "";
@@ -207,6 +237,7 @@ export function subscribeEmbeddedPiSession(
     let inThinking = state.thinking;
     for (const match of text.matchAll(THINKING_TAG_SCAN_RE)) {
       const idx = match.index ?? 0;
+      if (codeSpans.isInside(idx)) continue;
       if (!inThinking) {
         processed += text.slice(lastIndex, idx);
       }
@@ -223,9 +254,11 @@ export function subscribeEmbeddedPiSession(
     // If enforcement is disabled, we still strip the tags themselves to prevent
     // hallucinations (e.g. Minimax copying the style) from leaking, but we
     // do not enforce buffering/extraction logic.
+    const finalCodeSpans = buildCodeSpanIndex(processed, inlineStateStart);
     if (!params.enforceFinalTag) {
+      state.inlineCode = finalCodeSpans.inlineState;
       FINAL_TAG_SCAN_RE.lastIndex = 0;
-      return processed.replace(FINAL_TAG_SCAN_RE, "");
+      return stripTagsOutsideCodeSpans(processed, FINAL_TAG_SCAN_RE, finalCodeSpans.isInside);
     }
 
     // If enforcement is enabled, only return text that appeared inside a <final> block.
@@ -237,6 +270,7 @@ export function subscribeEmbeddedPiSession(
 
     for (const match of processed.matchAll(FINAL_TAG_SCAN_RE)) {
       const idx = match.index ?? 0;
+      if (finalCodeSpans.isInside(idx)) continue;
       const isClose = match[1] === "/";
 
       if (!inFinal && !isClose) {
@@ -266,7 +300,27 @@ export function subscribeEmbeddedPiSession(
 
     // Hardened Cleanup: Remove any remaining <final> tags that might have been
     // missed (e.g. nested tags or hallucinations) to prevent leakage.
-    return result.replace(FINAL_TAG_SCAN_RE, "");
+    const resultCodeSpans = buildCodeSpanIndex(result, inlineStateStart);
+    state.inlineCode = resultCodeSpans.inlineState;
+    return stripTagsOutsideCodeSpans(result, FINAL_TAG_SCAN_RE, resultCodeSpans.isInside);
+  };
+
+  const stripTagsOutsideCodeSpans = (
+    text: string,
+    pattern: RegExp,
+    isInside: (index: number) => boolean,
+  ) => {
+    let output = "";
+    let lastIndex = 0;
+    pattern.lastIndex = 0;
+    for (const match of text.matchAll(pattern)) {
+      const idx = match.index ?? 0;
+      if (isInside(idx)) continue;
+      output += text.slice(lastIndex, idx);
+      lastIndex = idx + match[0].length;
+    }
+    output += text.slice(lastIndex);
+    return output;
   };
 
   const emitBlockChunk = (text: string) => {
@@ -279,15 +333,8 @@ export function subscribeEmbeddedPiSession(
     // Only check committed (successful) messaging tool texts - checking pending texts
     // is risky because if the tool fails after suppression, the user gets no response
     const normalizedChunk = normalizeTextForComparison(chunk);
-    if (
-      isMessagingToolDuplicateNormalized(
-        normalizedChunk,
-        messagingToolSentTextsNormalized,
-      )
-    ) {
-      log.debug(
-        `Skipping block reply - already sent via messaging tool: ${chunk.slice(0, 50)}...`,
-      );
+    if (isMessagingToolDuplicateNormalized(normalizedChunk, messagingToolSentTextsNormalized)) {
+      log.debug(`Skipping block reply - already sent via messaging tool: ${chunk.slice(0, 50)}...`);
       return;
     }
 
@@ -297,8 +344,7 @@ export function subscribeEmbeddedPiSession(
     const splitResult = parseReplyDirectives(chunk);
     const { text: cleanedText, mediaUrls, audioAsVoice } = splitResult;
     // Skip empty payloads, but always emit if audioAsVoice is set (to propagate the flag)
-    if (!cleanedText && (!mediaUrls || mediaUrls.length === 0) && !audioAsVoice)
-      return;
+    if (!cleanedText && (!mediaUrls || mediaUrls.length === 0) && !audioAsVoice) return;
     void params.onBlockReply({
       text: cleanedText,
       mediaUrls: mediaUrls?.length ? mediaUrls : undefined,
@@ -335,6 +381,7 @@ export function subscribeEmbeddedPiSession(
     toolMetas.length = 0;
     toolMetaById.clear();
     toolSummaryById.clear();
+    state.lastToolError = undefined;
     messagingToolSentTexts.length = 0;
     messagingToolSentTextsNormalized.length = 0;
     messagingToolSentTargets.length = 0;
@@ -350,7 +397,9 @@ export function subscribeEmbeddedPiSession(
     blockChunking,
     blockChunker,
     shouldEmitToolResult,
+    shouldEmitToolOutput,
     emitToolSummary,
+    emitToolOutput,
     stripBlockTags,
     emitBlockChunk,
     flushBlockReplyBuffer,
@@ -365,22 +414,20 @@ export function subscribeEmbeddedPiSession(
     maybeResolveCompactionWait,
   };
 
-  const unsubscribe = params.session.subscribe(
-    createEmbeddedPiSessionEventHandler(ctx),
-  );
+  const unsubscribe = params.session.subscribe(createEmbeddedPiSessionEventHandler(ctx));
 
   return {
     assistantTexts,
     toolMetas,
     unsubscribe,
-    isCompacting: () =>
-      state.compactionInFlight || state.pendingCompactionRetry > 0,
+    isCompacting: () => state.compactionInFlight || state.pendingCompactionRetry > 0,
     getMessagingToolSentTexts: () => messagingToolSentTexts.slice(),
     getMessagingToolSentTargets: () => messagingToolSentTargets.slice(),
     // Returns true if any messaging tool successfully sent a message.
     // Used to suppress agent's confirmation text (e.g., "Respondi no Telegram!")
     // which is generated AFTER the tool sends the actual answer.
     didSendViaMessagingTool: () => messagingToolSentTexts.length > 0,
+    getLastToolError: () => (state.lastToolError ? { ...state.lastToolError } : undefined),
     waitForCompactionRetry: () => {
       if (state.compactionInFlight || state.pendingCompactionRetry > 0) {
         ensureCompactionPromise();
@@ -390,9 +437,7 @@ export function subscribeEmbeddedPiSession(
         queueMicrotask(() => {
           if (state.compactionInFlight || state.pendingCompactionRetry > 0) {
             ensureCompactionPromise();
-            void (state.compactionRetryPromise ?? Promise.resolve()).then(
-              resolve,
-            );
+            void (state.compactionRetryPromise ?? Promise.resolve()).then(resolve);
           } else {
             resolve();
           }

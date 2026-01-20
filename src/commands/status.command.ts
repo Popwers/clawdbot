@@ -2,16 +2,20 @@ import { withProgress } from "../cli/progress.js";
 import { resolveGatewayPort } from "../config/config.js";
 import { buildGatewayConnectionDetails, callGateway } from "../gateway/call.js";
 import { info } from "../globals.js";
-import {
-  formatUsageReportLines,
-  loadProviderUsageSummary,
-} from "../infra/provider-usage.js";
+import { formatUsageReportLines, loadProviderUsageSummary } from "../infra/provider-usage.js";
 import type { RuntimeEnv } from "../runtime.js";
+import { runSecurityAudit } from "../security/audit.js";
 import { renderTable } from "../terminal/table.js";
 import { theme } from "../terminal/theme.js";
+import {
+  resolveMemoryCacheSummary,
+  resolveMemoryFtsState,
+  resolveMemoryVectorState,
+  type Tone,
+} from "../memory/status-format.js";
 import { formatHealthChannelLines, type HealthSummary } from "./health.js";
 import { resolveControlUiLinks } from "./onboard-helpers.js";
-import { getDaemonStatusSummary } from "./status.daemon.js";
+import { getDaemonStatusSummary, getNodeDaemonStatusSummary } from "./status.daemon.js";
 import {
   formatAge,
   formatDuration,
@@ -21,7 +25,11 @@ import {
 } from "./status.format.js";
 import { resolveGatewayProbeAuth } from "./status.gateway-probe.js";
 import { scanStatus } from "./status.scan.js";
-import { formatUpdateOneLiner } from "./status.update.js";
+import {
+  formatUpdateAvailableHint,
+  formatUpdateOneLiner,
+  resolveUpdateAvailability,
+} from "./status.update.js";
 import { formatGatewayAuthUsed } from "./status-all/format.js";
 import { statusAllCommand } from "./status-all.js";
 
@@ -62,7 +70,24 @@ export async function statusCommand(
     agentStatus,
     channels,
     summary,
+    memory,
+    memoryPlugin,
   } = scan;
+
+  const securityAudit = await withProgress(
+    {
+      label: "Running security audit…",
+      indeterminate: true,
+      enabled: opts.json !== true,
+    },
+    async () =>
+      await runSecurityAudit({
+        config: cfg,
+        deep: false,
+        includeFilesystem: true,
+        includeChannelSecurity: true,
+      }),
+  );
 
   const usage = opts.usage
     ? await withProgress(
@@ -71,8 +96,7 @@ export async function statusCommand(
           indeterminate: true,
           enabled: opts.json !== true,
         },
-        async () =>
-          await loadProviderUsageSummary({ timeoutMs: opts.timeoutMs }),
+        async () => await loadProviderUsageSummary({ timeoutMs: opts.timeoutMs }),
       )
     : undefined;
   const health: HealthSummary | undefined = opts.deep
@@ -85,18 +109,25 @@ export async function statusCommand(
         async () =>
           await callGateway<HealthSummary>({
             method: "health",
+            params: { probe: true },
             timeoutMs: opts.timeoutMs,
           }),
       )
     : undefined;
 
   if (opts.json) {
+    const [daemon, nodeDaemon] = await Promise.all([
+      getDaemonStatusSummary(),
+      getNodeDaemonStatusSummary(),
+    ]);
     runtime.log(
       JSON.stringify(
         {
           ...summary,
           os: osSummary,
           update,
+          memory,
+          memoryPlugin,
           gateway: {
             mode: gatewayMode,
             url: gatewayConnection.url,
@@ -107,7 +138,10 @@ export async function statusCommand(
             self: gatewaySelf,
             error: gatewayProbe?.error ?? null,
           },
+          gatewayService: daemon,
+          nodeService: nodeDaemon,
           agents: agentStatus,
+          securityAudit,
           ...(health || usage ? { health, usage } : {}),
         },
         null,
@@ -151,11 +185,7 @@ export async function statusCommand(
       ? warn("misconfigured (remote.url missing)")
       : gatewayReachable
         ? ok(`reachable ${formatDuration(gatewayProbe?.connectLatencyMs)}`)
-        : warn(
-            gatewayProbe?.error
-              ? `unreachable (${gatewayProbe.error})`
-              : "unreachable",
-          );
+        : warn(gatewayProbe?.error ? `unreachable (${gatewayProbe.error})` : "unreachable");
     const auth =
       gatewayReachable && !remoteUrlMissing
         ? ` · auth ${formatGatewayAuthUsed(resolveGatewayProbeAuth(cfg))}`
@@ -181,17 +211,24 @@ export async function statusCommand(
         ? `${agentStatus.bootstrapPendingCount} bootstrapping`
         : "no bootstraps";
     const def = agentStatus.agents.find((a) => a.id === agentStatus.defaultId);
-    const defActive =
-      def?.lastActiveAgeMs != null ? formatAge(def.lastActiveAgeMs) : "unknown";
+    const defActive = def?.lastActiveAgeMs != null ? formatAge(def.lastActiveAgeMs) : "unknown";
     const defSuffix = def ? ` · default ${def.id} active ${defActive}` : "";
     return `${agentStatus.agents.length} · ${pending} · sessions ${agentStatus.totalSessions}${defSuffix}`;
   })();
 
-  const daemon = await getDaemonStatusSummary();
+  const [daemon, nodeDaemon] = await Promise.all([
+    getDaemonStatusSummary(),
+    getNodeDaemonStatusSummary(),
+  ]);
   const daemonValue = (() => {
     if (daemon.installed === false) return `${daemon.label} not installed`;
     const installedPrefix = daemon.installed === true ? "installed · " : "";
     return `${daemon.label} ${installedPrefix}${daemon.loadedText}${daemon.runtimeShort ? ` · ${daemon.runtimeShort}` : ""}`;
+  })();
+  const nodeDaemonValue = (() => {
+    if (nodeDaemon.installed === false) return `${nodeDaemon.label} not installed`;
+    const installedPrefix = nodeDaemon.installed === true ? "installed · " : "";
+    return `${nodeDaemon.label} ${installedPrefix}${nodeDaemon.loadedText}${nodeDaemon.runtimeShort ? ` · ${nodeDaemon.runtimeShort}` : ""}`;
   })();
 
   const defaults = summary.sessions.defaults;
@@ -199,11 +236,64 @@ export async function statusCommand(
     ? ` (${formatKTokens(defaults.contextTokens)} ctx)`
     : "";
   const eventsValue =
-    summary.queuedSystemEvents.length > 0
-      ? `${summary.queuedSystemEvents.length} queued`
-      : "none";
+    summary.queuedSystemEvents.length > 0 ? `${summary.queuedSystemEvents.length} queued` : "none";
 
   const probesValue = health ? ok("enabled") : muted("skipped (use --deep)");
+
+  const heartbeatValue = (() => {
+    const parts = summary.heartbeat.agents
+      .map((agent) => {
+        if (!agent.enabled || !agent.everyMs) return `disabled (${agent.agentId})`;
+        const everyLabel = agent.every;
+        return `${everyLabel} (${agent.agentId})`;
+      })
+      .filter(Boolean);
+    return parts.length > 0 ? parts.join(", ") : "disabled";
+  })();
+
+  const storeLabel =
+    summary.sessions.paths.length > 1
+      ? `${summary.sessions.paths.length} stores`
+      : (summary.sessions.paths[0] ?? "unknown");
+
+  const memoryValue = (() => {
+    if (!memoryPlugin.enabled) {
+      const suffix = memoryPlugin.reason ? ` (${memoryPlugin.reason})` : "";
+      return muted(`disabled${suffix}`);
+    }
+    if (!memory) {
+      const slot = memoryPlugin.slot ? `plugin ${memoryPlugin.slot}` : "plugin";
+      return muted(`enabled (${slot}) · unavailable`);
+    }
+    const parts: string[] = [];
+    const dirtySuffix = memory.dirty ? ` · ${warn("dirty")}` : "";
+    parts.push(`${memory.files} files · ${memory.chunks} chunks${dirtySuffix}`);
+    if (memory.sources?.length) parts.push(`sources ${memory.sources.join(", ")}`);
+    if (memoryPlugin.slot) parts.push(`plugin ${memoryPlugin.slot}`);
+    const colorByTone = (tone: Tone, text: string) =>
+      tone === "ok" ? ok(text) : tone === "warn" ? warn(text) : muted(text);
+    const vector = memory.vector;
+    if (vector) {
+      const state = resolveMemoryVectorState(vector);
+      const label = state.state === "disabled" ? "vector off" : `vector ${state.state}`;
+      parts.push(colorByTone(state.tone, label));
+    }
+    const fts = memory.fts;
+    if (fts) {
+      const state = resolveMemoryFtsState(fts);
+      const label = state.state === "disabled" ? "fts off" : `fts ${state.state}`;
+      parts.push(colorByTone(state.tone, label));
+    }
+    const cache = memory.cache;
+    if (cache) {
+      const summary = resolveMemoryCacheSummary(cache);
+      parts.push(colorByTone(summary.tone, summary.text));
+    }
+    return parts.join(" · ");
+  })();
+
+  const updateAvailability = resolveUpdateAvailability(update);
+  const updateLine = formatUpdateOneLiner(update).replace(/^Update:\s*/i, "");
 
   const overviewRows = [
     { Item: "Dashboard", Value: dashboard },
@@ -219,17 +309,19 @@ export async function statusCommand(
     },
     {
       Item: "Update",
-      Value: formatUpdateOneLiner(update).replace(/^Update:\s*/i, ""),
+      Value: updateAvailability.available ? warn(`available · ${updateLine}`) : updateLine,
     },
     { Item: "Gateway", Value: gatewayValue },
-    { Item: "Daemon", Value: daemonValue },
+    { Item: "Gateway service", Value: daemonValue },
+    { Item: "Node service", Value: nodeDaemonValue },
     { Item: "Agents", Value: agentsValue },
+    { Item: "Memory", Value: memoryValue },
     { Item: "Probes", Value: probesValue },
     { Item: "Events", Value: eventsValue },
-    { Item: "Heartbeat", Value: `${summary.heartbeatSeconds}s` },
+    { Item: "Heartbeat", Value: heartbeatValue },
     {
       Item: "Sessions",
-      Value: `${summary.sessions.count} active · default ${defaults.model ?? "unknown"}${defaultCtx} · store ${summary.sessions.path}`,
+      Value: `${summary.sessions.count} active · default ${defaults.model ?? "unknown"}${defaultCtx} · ${storeLabel}`,
     },
   ];
 
@@ -246,6 +338,44 @@ export async function statusCommand(
       rows: overviewRows,
     }).trimEnd(),
   );
+
+  runtime.log("");
+  runtime.log(theme.heading("Security audit"));
+  const fmtSummary = (value: { critical: number; warn: number; info: number }) => {
+    const parts = [
+      theme.error(`${value.critical} critical`),
+      theme.warn(`${value.warn} warn`),
+      theme.muted(`${value.info} info`),
+    ];
+    return parts.join(" · ");
+  };
+  runtime.log(theme.muted(`Summary: ${fmtSummary(securityAudit.summary)}`));
+  const importantFindings = securityAudit.findings.filter(
+    (f) => f.severity === "critical" || f.severity === "warn",
+  );
+  if (importantFindings.length === 0) {
+    runtime.log(theme.muted("No critical or warn findings detected."));
+  } else {
+    const severityLabel = (sev: "critical" | "warn" | "info") => {
+      if (sev === "critical") return theme.error("CRITICAL");
+      if (sev === "warn") return theme.warn("WARN");
+      return theme.muted("INFO");
+    };
+    const sevRank = (sev: "critical" | "warn" | "info") =>
+      sev === "critical" ? 0 : sev === "warn" ? 1 : 2;
+    const sorted = [...importantFindings].sort((a, b) => sevRank(a.severity) - sevRank(b.severity));
+    const shown = sorted.slice(0, 6);
+    for (const f of shown) {
+      runtime.log(`  ${severityLabel(f.severity)} ${f.title}`);
+      runtime.log(`    ${shortenText(f.detail.replaceAll("\n", " "), 160)}`);
+      if (f.remediation?.trim()) runtime.log(`    ${theme.muted(`Fix: ${f.remediation.trim()}`)}`);
+    }
+    if (sorted.length > shown.length) {
+      runtime.log(theme.muted(`… +${sorted.length - shown.length} more`));
+    }
+  }
+  runtime.log(theme.muted("Full report: clawdbot security audit"));
+  runtime.log(theme.muted("Deep probe: clawdbot security audit --deep"));
 
   runtime.log("");
   runtime.log(theme.heading("Channels"));
@@ -270,8 +400,7 @@ export async function statusCommand(
       ],
       rows: channels.rows.map((row) => {
         const issues = channelIssuesByChannel.get(row.id) ?? [];
-        const effectiveState =
-          row.state === "off" ? "off" : issues.length > 0 ? "warn" : row.state;
+        const effectiveState = row.state === "off" ? "off" : issues.length > 0 ? "warn" : row.state;
         const issueSuffix =
           issues.length > 0
             ? ` · ${warn(`gateway: ${shortenText(issues[0]?.message ?? "issue", 84)}`)}`
@@ -353,7 +482,7 @@ export async function statusCommand(
       Detail: `${health.durationMs}ms`,
     });
 
-    for (const line of formatHealthChannelLines(health)) {
+    for (const line of formatHealthChannelLines(health, { accountMode: "all" })) {
       const colon = line.indexOf(":");
       if (colon === -1) continue;
       const item = line.slice(0, colon).trim();
@@ -396,6 +525,11 @@ export async function statusCommand(
   runtime.log("FAQ: https://docs.clawd.bot/faq");
   runtime.log("Troubleshooting: https://docs.clawd.bot/troubleshooting");
   runtime.log("");
+  const updateHint = formatUpdateAvailableHint(update);
+  if (updateHint) {
+    runtime.log(theme.warn(updateHint));
+    runtime.log("");
+  }
   runtime.log("Next steps:");
   runtime.log("  Need to share?      clawdbot status --all");
   runtime.log("  Need to debug live? clawdbot logs --follow");

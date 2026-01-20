@@ -31,6 +31,16 @@ Minimal config:
 - Deterministic routing: replies return to WhatsApp, no model routing.
 - Model sees enough context to understand quoted replies.
 
+## Config writes
+By default, WhatsApp is allowed to write config updates triggered by `/config set|unset` (requires `commands.config: true`).
+
+Disable with:
+```json5
+{
+  channels: { whatsapp: { configWrites: false } }
+}
+```
+
 ## Architecture (who owns what)
 - **Gateway** owns the Baileys socket and inbox loop.
 - **CLI / macOS app** talk to the gateway; no direct Baileys use.
@@ -72,15 +82,13 @@ When the wizard asks for your personal WhatsApp number, enter the phone you will
     "selfChatMode": true,
     "dmPolicy": "allowlist",
     "allowFrom": ["+15551234567"]
-  },
-  "messages": {
-    "responsePrefix": "[clawdbot]"
   }
 }
 ```
 
-Tip: set `messages.responsePrefix` explicitly if you want a consistent bot prefix
-on outbound replies.
+Self-chat replies default to `[{identity.name}]` when set (otherwise `[clawdbot]`)
+if `messages.responsePrefix` is unset. Set it explicitly to customize or disable
+the prefix (use `""` to remove it).
 
 ### Number sourcing tips
 - **Local eSIM** from your country's mobile carrier (most reliable)
@@ -128,6 +136,32 @@ Behavior:
 - Self-chat mode (allowFrom includes your number) avoids auto read receipts and ignores mention JIDs.
 - Read receipts sent for non-self-chat DMs.
 
+## Read receipts
+By default, the gateway marks inbound WhatsApp messages as read (blue ticks) once they are accepted.
+
+Disable globally:
+```json5
+{
+  channels: { whatsapp: { sendReadReceipts: false } }
+}
+```
+
+Disable per account:
+```json5
+{
+  channels: {
+    whatsapp: {
+      accounts: {
+        personal: { sendReadReceipts: false }
+      }
+    }
+  }
+}
+```
+
+Notes:
+- Self-chat mode always skips read receipts.
+
 ## WhatsApp FAQ: sending messages + pairing
 
 **Will Clawdbot message random contacts when I link WhatsApp?**  
@@ -168,9 +202,9 @@ The wizard uses it to set your **allowlist/owner** so your own DMs are permitted
   - `always`: always triggers.
 - `/activation mention|always` is owner-only and must be sent as a standalone message.
 - Owner = `channels.whatsapp.allowFrom` (or self E.164 if unset).
-- **History injection**:
-  - Recent messages (default 50) inserted under:
-    `[Chat messages since your last reply - for context]`
+- **History injection** (pending-only):
+  - Recent *unprocessed* messages (default 50) inserted under:
+    `[Chat messages since your last reply - for context]` (messages already in the session are not re-injected)
   - Current message under:
     `[Current message - respond to this]`
   - Sender suffix appended: `[from: Name (+E164)]`
@@ -260,8 +294,9 @@ WhatsApp can automatically send emoji reactions to incoming messages immediately
 
 ## Heartbeats
 - **Gateway heartbeat** logs connection health (`web.heartbeatSeconds`, default 60s).
-- **Agent heartbeat** is global (`agents.defaults.heartbeat.*`) and runs in the main session.
-  - Uses the configured heartbeat prompt (default: `Read HEARTBEAT.md if exists. Consider outstanding tasks. Checkup sometimes on your human during (user local) day time.`) + `HEARTBEAT_OK` skip behavior.
+- **Agent heartbeat** can be configured per agent (`agents.list[].heartbeat`) or globally
+  via `agents.defaults.heartbeat` (fallback when no per-agent entries are set).
+  - Uses the configured heartbeat prompt (default: `Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.`) + `HEARTBEAT_OK` skip behavior.
   - Delivery defaults to the last used channel (or configured target).
 
 ## Reconnect behavior
@@ -273,7 +308,7 @@ WhatsApp can automatically send emoji reactions to incoming messages immediately
 ## Config quick map
 - `channels.whatsapp.dmPolicy` (DM policy: pairing/allowlist/open/disabled).
 - `channels.whatsapp.selfChatMode` (same-phone setup; bot uses your personal WhatsApp number).
-- `channels.whatsapp.allowFrom` (DM allowlist).
+- `channels.whatsapp.allowFrom` (DM allowlist). WhatsApp uses E.164 phone numbers (no usernames).
 - `channels.whatsapp.mediaMaxMb` (inbound media save cap).
 - `channels.whatsapp.ackReaction` (auto-reaction on message receipt: `{emoji, direct, group}`).
 - `channels.whatsapp.accounts.<accountId>.*` (per-account settings + optional `authDir`).
@@ -282,6 +317,7 @@ WhatsApp can automatically send emoji reactions to incoming messages immediately
 - `channels.whatsapp.groupAllowFrom` (group sender allowlist).
 - `channels.whatsapp.groupPolicy` (group policy).
 - `channels.whatsapp.historyLimit` / `channels.whatsapp.accounts.<accountId>.historyLimit` (group history context; `0` disables).
+- `channels.whatsapp.dmHistoryLimit` (DM history limit in user turns). Per-user overrides: `channels.whatsapp.dms["<phone>"].historyLimit`.
 - `channels.whatsapp.groups` (group allowlist + mention gating defaults; use `"*"` to allow all)
 - `channels.whatsapp.actions.reactions` (gate WhatsApp tool reactions).
 - `agents.list[].groupChat.mentionPatterns` (or `messages.groupChat.mentionPatterns`)
@@ -293,6 +329,7 @@ WhatsApp can automatically send emoji reactions to incoming messages immediately
 - `agents.defaults.heartbeat.model` (optional override)
 - `agents.defaults.heartbeat.target`
 - `agents.defaults.heartbeat.to`
+- `agents.list[].heartbeat.*` (per-agent overrides)
 - `session.*` (scope, idle, store, mainKey)
 - `web.enabled` (disable channel startup when false)
 - `web.heartbeatSeconds`

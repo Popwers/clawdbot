@@ -1,6 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { ResolvedTimeFormat } from "../date-time.js";
 import type { EmbeddedContextFile } from "../pi-embedded-helpers.js";
-import { buildAgentSystemPrompt } from "../system-prompt.js";
+import { buildAgentSystemPrompt, type PromptMode } from "../system-prompt.js";
 import { buildToolSummaryMap } from "../tool-summaries.js";
 import type { EmbeddedSandboxInfo } from "./types.js";
 import type { ReasoningLevel, ThinkLevel } from "./utils.js";
@@ -14,7 +15,15 @@ export function buildEmbeddedSystemPrompt(params: {
   reasoningTagHint: boolean;
   heartbeatPrompt?: string;
   skillsPrompt?: string;
+  docsPath?: string;
+  reactionGuidance?: {
+    level: "minimal" | "extensive";
+    channel: string;
+  };
+  /** Controls which hardcoded sections to include. Defaults to "full". */
+  promptMode?: PromptMode;
   runtimeInfo: {
+    agentId?: string;
     host: string;
     os: string;
     arch: string;
@@ -29,6 +38,7 @@ export function buildEmbeddedSystemPrompt(params: {
   modelAliasLines: string[];
   userTimezone: string;
   userTime?: string;
+  userTimeFormat?: ResolvedTimeFormat;
   contextFiles?: EmbeddedContextFile[];
 }): string {
   return buildAgentSystemPrompt({
@@ -40,6 +50,9 @@ export function buildEmbeddedSystemPrompt(params: {
     reasoningTagHint: params.reasoningTagHint,
     heartbeatPrompt: params.heartbeatPrompt,
     skillsPrompt: params.skillsPrompt,
+    docsPath: params.docsPath,
+    reactionGuidance: params.reactionGuidance,
+    promptMode: params.promptMode,
     runtimeInfo: params.runtimeInfo,
     sandboxInfo: params.sandboxInfo,
     toolNames: params.tools.map((tool) => tool.name),
@@ -47,6 +60,7 @@ export function buildEmbeddedSystemPrompt(params: {
     modelAliasLines: params.modelAliasLines,
     userTimezone: params.userTimezone,
     userTime: params.userTime,
+    userTimeFormat: params.userTimeFormat,
     contextFiles: params.contextFiles,
   });
 }

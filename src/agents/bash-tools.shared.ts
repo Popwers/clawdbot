@@ -60,7 +60,12 @@ export function buildDockerExecArgs(params: {
   for (const [key, value] of Object.entries(params.env)) {
     args.push("-e", `${key}=${value}`);
   }
-  args.push(params.containerName, "sh", "-lc", params.command);
+  // Login shell (-l) sources /etc/profile which resets PATH to a minimal set,
+  // overriding both Docker ENV and -e PATH=... environment variables.
+  // Prepend custom PATH after profile sourcing to ensure custom tools are accessible
+  // while preserving system paths that /etc/profile may have added.
+  const pathExport = params.env.PATH ? `export PATH="${params.env.PATH}:$PATH"; ` : "";
+  args.push(params.containerName, "sh", "-lc", `${pathExport}${params.command}`);
   return args;
 }
 
@@ -98,10 +103,7 @@ export async function resolveSandboxWorkdir(params: {
   }
 }
 
-export function killSession(session: {
-  pid?: number;
-  child?: ChildProcessWithoutNullStreams;
-}) {
+export function killSession(session: { pid?: number; child?: ChildProcessWithoutNullStreams }) {
   const pid = session.pid ?? session.child?.pid;
   if (pid) {
     killProcessTree(pid);
@@ -117,9 +119,7 @@ export function resolveWorkdir(workdir: string, warnings: string[]) {
   } catch {
     // ignore, fallback below
   }
-  warnings.push(
-    `Warning: workdir "${workdir}" is unavailable; using "${fallback}".`,
-  );
+  warnings.push(`Warning: workdir "${workdir}" is unavailable; using "${fallback}".`);
   return fallback;
 }
 
@@ -177,9 +177,7 @@ export function sliceLogLines(
   const totalLines = lines.length;
   const totalChars = text.length;
   let start =
-    typeof offset === "number" && Number.isFinite(offset)
-      ? Math.max(0, Math.floor(offset))
-      : 0;
+    typeof offset === "number" && Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0;
   if (limit !== undefined && offset === undefined) {
     const tailCount = Math.max(0, Math.floor(limit));
     start = Math.max(totalLines - tailCount, 0);
@@ -203,8 +201,7 @@ export function deriveSessionName(command: string): string | undefined {
 }
 
 function tokenizeCommand(command: string): string[] {
-  const matches =
-    command.match(/(?:[^\s"']+|"(?:\\.|[^"])*"|'(?:\\.|[^'])*')+/g) ?? [];
+  const matches = command.match(/(?:[^\s"']+|"(?:\\.|[^"])*"|'(?:\\.|[^'])*')+/g) ?? [];
   return matches.map((token) => stripQuotes(token)).filter(Boolean);
 }
 

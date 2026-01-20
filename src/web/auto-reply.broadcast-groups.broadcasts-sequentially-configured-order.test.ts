@@ -10,8 +10,7 @@ vi.mock("../agents/pi-embedded.js", () => ({
   isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),
   runEmbeddedPiAgent: vi.fn(),
   queueEmbeddedPiMessage: vi.fn().mockReturnValue(false),
-  resolveEmbeddedSessionLane: (key: string) =>
-    `session:${key.trim() || "main"}`,
+  resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
 }));
 
 import { resetInboundDedupe } from "../auto-reply/reply/inbound-dedupe.js";
@@ -120,9 +119,7 @@ describe("broadcast groups", () => {
       | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
       | undefined;
     const listenerFactory = async (opts: {
-      onMessage: (
-        msg: import("./inbound.js").WebInboundMessage,
-      ) => Promise<void>;
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
     }) => {
       capturedOnMessage = opts.onMessage;
       return { close: vi.fn() };
@@ -172,9 +169,7 @@ describe("broadcast groups", () => {
       | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
       | undefined;
     const listenerFactory = async (opts: {
-      onMessage: (
-        msg: import("./inbound.js").WebInboundMessage,
-      ) => Promise<void>;
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
     }) => {
       capturedOnMessage = opts.onMessage;
       return { close: vi.fn() };
@@ -221,12 +216,19 @@ describe("broadcast groups", () => {
 
     expect(resolver).toHaveBeenCalledTimes(2);
     for (const call of resolver.mock.calls.slice(0, 2)) {
-      const payload = call[0] as { Body: string };
+      const payload = call[0] as {
+        Body: string;
+        SenderName?: string;
+        SenderE164?: string;
+        SenderId?: string;
+      };
       expect(payload.Body).toContain("Chat messages since your last reply");
       expect(payload.Body).toContain("Alice (+111): hello group");
       expect(payload.Body).toContain("[message_id: g1]");
       expect(payload.Body).toContain("@bot ping");
-      expect(payload.Body).toContain("[from: Bob (+222)]");
+      expect(payload.SenderName).toBe("Bob");
+      expect(payload.SenderE164).toBe("+222");
+      expect(payload.SenderId).toBe("+222");
     }
 
     await capturedOnMessage?.({
@@ -293,9 +295,7 @@ describe("broadcast groups", () => {
       | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
       | undefined;
     const listenerFactory = async (opts: {
-      onMessage: (
-        msg: import("./inbound.js").WebInboundMessage,
-      ) => Promise<void>;
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
     }) => {
       capturedOnMessage = opts.onMessage;
       return { close: vi.fn() };

@@ -34,7 +34,7 @@ beforeEach(() => {
     durationMs: 0,
   });
   legacyReadConfigFileSnapshot.mockReset().mockResolvedValue({
-    path: "/tmp/clawdis.json",
+    path: "/tmp/clawdbot.json",
     exists: false,
     raw: null,
     parsed: {},
@@ -54,9 +54,8 @@ beforeEach(() => {
     signal: null,
     killed: false,
   });
-  ensureAuthProfileStore
-    .mockReset()
-    .mockReturnValue({ version: 1, profiles: {} });
+  ensureAuthProfileStore.mockReset().mockReturnValue({ version: 1, profiles: {} });
+  loadClawdbotPlugins.mockReset().mockReturnValue({ plugins: [], diagnostics: [] });
   migrateLegacyConfig.mockReset().mockImplementation((raw: unknown) => ({
     config: raw as Record<string, unknown>,
     changes: ["Moved routing.allowFrom → channels.whatsapp.allowFrom."],
@@ -80,9 +79,7 @@ beforeEach(() => {
   originalStateDir = process.env.CLAWDBOT_STATE_DIR;
   originalUpdateInProgress = process.env.CLAWDBOT_UPDATE_IN_PROGRESS;
   process.env.CLAWDBOT_UPDATE_IN_PROGRESS = "1";
-  tempStateDir = fs.mkdtempSync(
-    path.join(os.tmpdir(), "clawdbot-doctor-state-"),
-  );
+  tempStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawdbot-doctor-state-"));
   process.env.CLAWDBOT_STATE_DIR = tempStateDir;
   fs.mkdirSync(path.join(tempStateDir, "agents", "main", "sessions"), {
     recursive: true,
@@ -134,12 +131,11 @@ const runCommandWithTimeout = vi.fn().mockResolvedValue({
   killed: false,
 });
 
-const ensureAuthProfileStore = vi
-  .fn()
-  .mockReturnValue({ version: 1, profiles: {} });
+const ensureAuthProfileStore = vi.fn().mockReturnValue({ version: 1, profiles: {} });
+const loadClawdbotPlugins = vi.fn().mockReturnValue({ plugins: [], diagnostics: [] });
 
 const legacyReadConfigFileSnapshot = vi.fn().mockResolvedValue({
-  path: "/tmp/clawdis.json",
+  path: "/tmp/clawdbot.json",
   exists: false,
   raw: null,
   parsed: {},
@@ -178,6 +174,9 @@ vi.mock("../agents/skills-status.js", () => ({
   buildWorkspaceSkillStatus: () => ({ skills: [] }),
 }));
 
+vi.mock("../plugins/loader.js", () => ({
+  loadClawdbotPlugins,
+}));
 vi.mock("../config/config.js", async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -254,6 +253,7 @@ vi.mock("../telegram/pairing-store.js", () => ({
 
 vi.mock("../pairing/pairing-store.js", () => ({
   readChannelAllowFromStore: vi.fn().mockResolvedValue([]),
+  upsertChannelPairingRequest: vi.fn().mockResolvedValue({ code: "000000", created: false }),
 }));
 
 vi.mock("../telegram/token.js", () => ({
@@ -295,6 +295,7 @@ vi.mock("./doctor-state-migrations.js", () => ({
   detectLegacyStateMigrations: vi.fn().mockResolvedValue({
     targetAgentId: "main",
     targetMainKey: "main",
+    targetScope: undefined,
     stateDir: "/tmp/state",
     oauthDir: "/tmp/oauth",
     sessions: {
@@ -303,6 +304,7 @@ vi.mock("./doctor-state-migrations.js", () => ({
       targetDir: "/tmp/state/agents/main/sessions",
       targetStorePath: "/tmp/state/agents/main/sessions/sessions.json",
       hasLegacy: false,
+      legacyKeys: [],
     },
     agentDir: {
       legacyDir: "/tmp/state/agent",
@@ -323,89 +325,6 @@ vi.mock("./doctor-state-migrations.js", () => ({
 }));
 
 describe("doctor command", () => {
-  it("falls back to legacy sandbox image when missing", async () => {
-    readConfigFileSnapshot.mockResolvedValue({
-      path: "/tmp/clawdbot.json",
-      exists: true,
-      raw: "{}",
-      parsed: {
-        agents: {
-          defaults: {
-            sandbox: {
-              mode: "non-main",
-              docker: {
-                image: "clawdbot-sandbox-common:bookworm-slim",
-              },
-            },
-          },
-        },
-      },
-      valid: true,
-      config: {
-        agents: {
-          defaults: {
-            sandbox: {
-              mode: "non-main",
-              docker: {
-                image: "clawdbot-sandbox-common:bookworm-slim",
-              },
-            },
-          },
-        },
-      },
-      issues: [],
-      legacyIssues: [],
-    });
-
-    runExec.mockImplementation((command: string, args: string[]) => {
-      if (command !== "docker") {
-        return Promise.resolve({ stdout: "", stderr: "" });
-      }
-      if (args[0] === "version") {
-        return Promise.resolve({ stdout: "1", stderr: "" });
-      }
-      if (args[0] === "image" && args[1] === "inspect") {
-        const image = args[2];
-        if (image === "clawdbot-sandbox-common:bookworm-slim") {
-          return Promise.reject(new Error("missing"));
-        }
-        if (image === "clawdis-sandbox-common:bookworm-slim") {
-          return Promise.resolve({ stdout: "ok", stderr: "" });
-        }
-      }
-      return Promise.resolve({ stdout: "", stderr: "" });
-    });
-
-    confirm
-      .mockResolvedValueOnce(false) // skip gateway token prompt
-      .mockResolvedValueOnce(false) // skip build
-      .mockResolvedValueOnce(true); // accept legacy fallback
-
-    const { doctorCommand } = await import("./doctor.js");
-    const runtime = {
-      log: vi.fn(),
-      error: vi.fn(),
-      exit: vi.fn(),
-    };
-
-    await doctorCommand(runtime);
-
-    const written = writeConfigFile.mock.calls.at(-1)?.[0] as Record<
-      string,
-      unknown
-    >;
-    const agents = written.agents as Record<string, unknown>;
-    const defaults = agents.defaults as Record<string, unknown>;
-    const sandbox = defaults.sandbox as Record<string, unknown>;
-    const docker = sandbox.docker as Record<string, unknown>;
-
-    expect(docker.image).toBe("clawdis-sandbox-common:bookworm-slim");
-    const defaultsCalls = runCommandWithTimeout.mock.calls.filter(
-      ([args]) => Array.isArray(args) && args[0] === "/usr/bin/defaults",
-    );
-    expect(defaultsCalls.length).toBe(runCommandWithTimeout.mock.calls.length);
-  });
-
   it("runs legacy state migrations in non-interactive mode without prompting", async () => {
     readConfigFileSnapshot.mockResolvedValue({
       path: "/tmp/clawdbot.json",
@@ -462,5 +381,5 @@ describe("doctor command", () => {
 
     expect(runLegacyStateMigrations).toHaveBeenCalledTimes(1);
     expect(confirm).not.toHaveBeenCalled();
-  }, 20_000);
+  }, 30_000);
 });

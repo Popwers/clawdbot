@@ -1,3 +1,4 @@
+import type { MsgContext } from "../../../auto-reply/templating.js";
 import type { getReplyFromConfig } from "../../../auto-reply/reply.js";
 import type { loadConfig } from "../../../config/config.js";
 import { logVerbose } from "../../../globals.js";
@@ -25,9 +26,7 @@ export function createWebOnMessageHandler(params: {
   echoTracker: EchoTracker;
   backgroundTasks: Set<Promise<unknown>>;
   replyResolver: typeof getReplyFromConfig;
-  replyLogger: ReturnType<
-    typeof import("../../../logging.js")["getChildLogger"]
-  >;
+  replyLogger: ReturnType<(typeof import("../../../logging.js"))["getChildLogger"]>;
   baseMentionConfig: MentionConfig;
   account: { authDir?: string; accountId?: string };
 }) {
@@ -90,14 +89,28 @@ export function createWebOnMessageHandler(params: {
 
     // Skip if this is a message we just sent (echo detection)
     if (params.echoTracker.has(msg.body)) {
-      logVerbose(
-        "Skipping auto-reply: detected echo (message matches recently sent text)",
-      );
+      logVerbose("Skipping auto-reply: detected echo (message matches recently sent text)");
       params.echoTracker.forget(msg.body);
       return;
     }
 
     if (msg.chatType === "group") {
+      const metaCtx = {
+        From: msg.from,
+        To: msg.to,
+        SessionKey: route.sessionKey,
+        AccountId: route.accountId,
+        ChatType: msg.chatType,
+        ConversationLabel: conversationId,
+        GroupSubject: msg.groupSubject,
+        SenderName: msg.senderName,
+        SenderId: msg.senderJid?.trim() || msg.senderE164,
+        SenderE164: msg.senderE164,
+        Provider: "whatsapp",
+        Surface: "whatsapp",
+        OriginatingChannel: "whatsapp",
+        OriginatingTo: conversationId,
+      } satisfies MsgContext;
       updateLastRouteInBackground({
         cfg: params.cfg,
         backgroundTasks: params.backgroundTasks,
@@ -106,6 +119,7 @@ export function createWebOnMessageHandler(params: {
         channel: "whatsapp",
         to: conversationId,
         accountId: route.accountId,
+        ctx: metaCtx,
         warn: params.replyLogger.warn.bind(params.replyLogger),
       });
 

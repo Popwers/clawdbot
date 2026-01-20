@@ -1,13 +1,32 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
+const repoRoot = path.dirname(fileURLToPath(import.meta.url));
+const isCI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
+
 export default defineConfig({
+  resolve: {
+    alias: {
+      "clawdbot/plugin-sdk": path.join(repoRoot, "src", "plugin-sdk", "index.ts"),
+    },
+  },
   test: {
-    include: ["src/**/*.test.ts", "test/format-error.test.ts"],
+    testTimeout: 60_000,
+    hookTimeout: 120_000,
+    pool: "forks",
+    maxWorkers: isCI ? 3 : 4,
+    include: [
+      "src/**/*.test.ts",
+      "extensions/**/*.test.ts",
+      "test/format-error.test.ts",
+    ],
     setupFiles: ["test/setup.ts"],
     exclude: [
       "dist/**",
       "apps/macos/**",
       "apps/macos/.build/**",
+      "**/node_modules/**",
       "**/vendor/**",
       "dist/Clawdbot.app/**",
       "**/*.live.test.ts",

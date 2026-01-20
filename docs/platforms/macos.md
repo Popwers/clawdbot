@@ -7,8 +7,8 @@ read_when:
 # Clawdbot macOS Companion (menu bar + gateway broker)
 
 The macOS app is the **menu‑bar companion** for Clawdbot. It owns permissions,
-manages the Gateway locally, and exposes macOS capabilities to the agent as a
-node.
+manages/attaches to the Gateway locally (launchd or manual), and exposes macOS
+capabilities to the agent as a node.
 
 ## What it does
 
@@ -17,16 +17,18 @@ node.
   Speech Recognition, Automation/AppleScript).
 - Runs or connects to the Gateway (local or remote).
 - Exposes macOS‑only tools (Canvas, Camera, Screen Recording, `system.run`).
+- Starts the local node host service in **remote** mode (launchd), and stops it in **local** mode.
 - Optionally hosts **PeekabooBridge** for UI automation.
 - Installs the global CLI (`clawdbot`) via npm/pnpm on request (bun not recommended for the Gateway runtime).
 
 ## Local vs remote mode
 
-- **Local** (default): the app ensures a local Gateway is running via launchd.
+- **Local** (default): the app attaches to a running local Gateway if present;
+  otherwise it enables the launchd service via `clawdbot daemon`.
 - **Remote**: the app connects to a Gateway over SSH/Tailscale and never starts
   a local process.
-- **Attach‑only** (debug): the app connects to an already‑running local Gateway
-  and never spawns its own.
+  The app starts the local **node host service** so the remote Gateway can reach this Mac.
+The app does not spawn the Gateway as a child process.
 
 ## Launchd control
 
@@ -53,6 +55,53 @@ The macOS app presents itself as a node. Common commands:
 - System: `system.run`, `system.notify`
 
 The node reports a `permissions` map so agents can decide what’s allowed.
+
+Node service + app IPC:
+- When the headless node service is running (remote mode), it connects to the Gateway WS as a node.
+- `system.run` executes in the macOS app (UI/TCC context) over a local Unix socket; prompts + output stay in-app.
+
+Diagram (SCI):
+```
+Gateway -> Bridge -> Node Service (TS)
+                 |  IPC (UDS + token + HMAC + TTL)
+                 v
+             Mac App (UI + TCC + system.run)
+```
+
+## Exec approvals (system.run)
+
+`system.run` is controlled by **Exec approvals** in the macOS app (Settings → Exec approvals).
+Security + ask + allowlist are stored locally on the Mac in:
+
+```
+~/.clawdbot/exec-approvals.json
+```
+
+Example:
+
+```json
+{
+  "version": 1,
+  "defaults": {
+    "security": "deny",
+    "ask": "on-miss"
+  },
+  "agents": {
+    "main": {
+      "security": "allowlist",
+      "ask": "on-miss",
+      "allowlist": [
+        { "pattern": "/opt/homebrew/bin/rg" }
+      ]
+    }
+  }
+}
+```
+
+Notes:
+- `allowlist` entries are JSON-encoded argv arrays.
+- Choosing “Always Allow” in the prompt adds that command to the allowlist.
+- `system.run` environment overrides are filtered (drops `PATH`, `DYLD_*`, `LD_*`, `NODE_OPTIONS`, `PYTHON*`, `PERL*`, `RUBYOPT`) and then merged with the app’s environment.
 
 ## Deep links
 
@@ -109,6 +158,23 @@ Options:
 Tip: compare against `pnpm clawdbot gateway discover --json` to see whether the
 macOS app’s discovery pipeline (NWBrowser + tailnet DNS‑SD fallback) differs from
 the Node CLI’s `dns-sd` based discovery.
+
+## Remote connection plumbing (SSH tunnels)
+
+When the macOS app runs in **Remote** mode, it opens an SSH tunnel so local UI
+components can talk to a remote Gateway as if it were on localhost.
+
+### Control tunnel (Gateway WebSocket port)
+- **Purpose:** health checks, status, Web Chat, config, and other control-plane calls.
+- **Local port:** the Gateway port (default `18789`), always stable.
+- **Remote port:** the same Gateway port on the remote host.
+- **Behavior:** no random local port; the app reuses an existing healthy tunnel
+  or restarts it if needed.
+- **SSH shape:** `ssh -N -L <local>:127.0.0.1:<remote>` with BatchMode +
+  ExitOnForwardFailure + keepalive options.
+
+For setup steps, see [macOS remote access](/platforms/mac/remote). For protocol
+details, see [Gateway protocol](/gateway/protocol).
 
 ## Related docs
 

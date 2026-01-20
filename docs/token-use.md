@@ -34,19 +34,22 @@ Everything the model receives counts toward the context limit:
 - Compaction summaries and pruning artifacts
 - Provider wrappers or safety headers (not visible, but still counted)
 
+For a practical breakdown (per injected file, tools, skills, and system prompt size), use `/context list` or `/context detail`. See [Context](/concepts/context).
+
 ## How to see current token usage
 
 Use these in chat:
 
 - `/status` → **emoji‑rich status card** with the session model, context usage,
   last response input/output tokens, and **estimated cost** (API key only).
-- `/cost on|off` → appends a **per-response usage line** to every reply.
+- `/usage off|tokens|full` → appends a **per-response usage footer** to every reply.
   - Persists per session (stored as `responseUsage`).
   - OAuth auth **hides cost** (tokens only).
+- `/usage cost` → shows a local cost summary from Clawdbot session logs.
 
 Other surfaces:
 
-- **TUI/Web TUI:** `/status` + `/cost` are supported.
+- **TUI/Web TUI:** `/status` + `/usage` are supported.
 - **CLI:** `clawdbot status --usage` and `clawdbot channels list` show
   provider quota windows (not per-response costs).
 

@@ -11,6 +11,36 @@ import {
 
 export const LEGACY_CONFIG_MIGRATIONS_PART_3: LegacyConfigMigration[] = [
   {
+    id: "auth.anthropic-claude-cli-mode-oauth",
+    describe: "Switch anthropic:claude-cli auth profile mode to oauth",
+    apply: (raw, changes) => {
+      const auth = getRecord(raw.auth);
+      const profiles = getRecord(auth?.profiles);
+      if (!profiles) return;
+      const claudeCli = getRecord(profiles["anthropic:claude-cli"]);
+      if (!claudeCli) return;
+      if (claudeCli.mode !== "token") return;
+      claudeCli.mode = "oauth";
+      changes.push('Updated auth.profiles["anthropic:claude-cli"].mode → "oauth".');
+    },
+  },
+  {
+    id: "tools.bash->tools.exec",
+    describe: "Move tools.bash to tools.exec",
+    apply: (raw, changes) => {
+      const tools = ensureRecord(raw, "tools");
+      const bash = getRecord(tools.bash);
+      if (!bash) return;
+      if (tools.exec === undefined) {
+        tools.exec = bash;
+        changes.push("Moved tools.bash → tools.exec.");
+      } else {
+        changes.push("Removed tools.bash (tools.exec already set).");
+      }
+      delete tools.bash;
+    },
+  },
+  {
     id: "agent.defaults-v2",
     describe: "Move agent config to agents.defaults and tools",
     apply: (raw, changes) => {
@@ -45,13 +75,11 @@ export const LEGACY_CONFIG_MIGRATIONS_PART_3: LegacyConfigMigration[] = [
 
       const bash = getRecord(agent.bash);
       if (bash) {
-        if (tools.exec === undefined && tools.bash === undefined) {
+        if (tools.exec === undefined) {
           tools.exec = bash;
           changes.push("Moved agent.bash → tools.exec.");
-        } else if (tools.exec !== undefined) {
-          changes.push("Removed agent.bash (tools.exec already set).");
         } else {
-          changes.push("Removed agent.bash (tools.bash already set).");
+          changes.push("Removed agent.bash (tools.exec already set).");
         }
       }
 
@@ -106,9 +134,7 @@ export const LEGACY_CONFIG_MIGRATIONS_PART_3: LegacyConfigMigration[] = [
       const entry = ensureAgentEntry(list, defaultId);
       if (entry.identity === undefined) {
         entry.identity = identity;
-        changes.push(
-          `Moved identity → agents.list (id "${defaultId}").identity.`,
-        );
+        changes.push(`Moved identity → agents.list (id "${defaultId}").identity.`);
       } else {
         changes.push("Removed identity (agents.list identity already set).");
       }
@@ -119,12 +145,9 @@ export const LEGACY_CONFIG_MIGRATIONS_PART_3: LegacyConfigMigration[] = [
   },
   {
     id: "bind-tailnet->auto",
-    describe: "Remap gateway/bridge bind 'tailnet' to 'auto'",
+    describe: "Remap gateway bind 'tailnet' to 'auto'",
     apply: (raw, changes) => {
-      const migrateBind = (
-        obj: Record<string, unknown> | null | undefined,
-        key: string,
-      ) => {
+      const migrateBind = (obj: Record<string, unknown> | null | undefined, key: string) => {
         if (!obj) return;
         const bind = obj.bind;
         if (bind === "tailnet") {
@@ -135,9 +158,6 @@ export const LEGACY_CONFIG_MIGRATIONS_PART_3: LegacyConfigMigration[] = [
 
       const gateway = getRecord(raw.gateway);
       migrateBind(gateway, "gateway");
-
-      const bridge = getRecord(raw.bridge);
-      migrateBind(bridge, "bridge");
     },
   },
 ];

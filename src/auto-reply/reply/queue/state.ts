@@ -1,9 +1,4 @@
-import type {
-  FollowupRun,
-  QueueDropPolicy,
-  QueueMode,
-  QueueSettings,
-} from "./types.js";
+import type { FollowupRun, QueueDropPolicy, QueueMode, QueueSettings } from "./types.js";
 
 export type FollowupQueueState = {
   items: FollowupRun[];
@@ -24,10 +19,7 @@ export const DEFAULT_QUEUE_DROP: QueueDropPolicy = "summarize";
 
 export const FOLLOWUP_QUEUES = new Map<string, FollowupQueueState>();
 
-export function getFollowupQueue(
-  key: string,
-  settings: QueueSettings,
-): FollowupQueueState {
+export function getFollowupQueue(key: string, settings: QueueSettings): FollowupQueueState {
   const existing = FOLLOWUP_QUEUES.get(key);
   if (existing) {
     existing.mode = settings.mode;
@@ -62,4 +54,19 @@ export function getFollowupQueue(
   };
   FOLLOWUP_QUEUES.set(key, created);
   return created;
+}
+
+export function clearFollowupQueue(key: string): number {
+  const cleaned = key.trim();
+  if (!cleaned) return 0;
+  const queue = FOLLOWUP_QUEUES.get(cleaned);
+  if (!queue) return 0;
+  const cleared = queue.items.length + queue.droppedCount;
+  queue.items.length = 0;
+  queue.droppedCount = 0;
+  queue.summaryLines = [];
+  queue.lastRun = undefined;
+  queue.lastEnqueuedAt = 0;
+  FOLLOWUP_QUEUES.delete(cleaned);
+  return cleared;
 }

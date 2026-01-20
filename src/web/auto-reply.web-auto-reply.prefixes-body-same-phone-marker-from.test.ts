@@ -10,18 +10,13 @@ vi.mock("../agents/pi-embedded.js", () => ({
   isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),
   runEmbeddedPiAgent: vi.fn(),
   queueEmbeddedPiMessage: vi.fn().mockReturnValue(false),
-  resolveEmbeddedSessionLane: (key: string) =>
-    `session:${key.trim() || "main"}`,
+  resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
 }));
 
 import { resetInboundDedupe } from "../auto-reply/reply/inbound-dedupe.js";
 import { resetLogger, setLoggerOverride } from "../logging.js";
 import { HEARTBEAT_TOKEN, monitorWebChannel } from "./auto-reply.js";
-import {
-  resetBaileysMocks,
-  resetLoadConfigMock,
-  setLoadConfigMock,
-} from "./test-helpers.js";
+import { resetBaileysMocks, resetLoadConfigMock, setLoadConfigMock } from "./test-helpers.js";
 
 let previousHome: string | undefined;
 let tempHome: string | undefined;
@@ -124,9 +119,7 @@ describe("web auto-reply", () => {
       | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
       | undefined;
     const listenerFactory = async (opts: {
-      onMessage: (
-        msg: import("./inbound.js").WebInboundMessage,
-      ) => Promise<void>;
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
     }) => {
       capturedOnMessage = opts.onMessage;
       return { close: vi.fn() };
@@ -159,9 +152,7 @@ describe("web auto-reply", () => {
       | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
       | undefined;
     const listenerFactory = async (opts: {
-      onMessage: (
-        msg: import("./inbound.js").WebInboundMessage,
-      ) => Promise<void>;
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
     }) => {
       capturedOnMessage = opts.onMessage;
       return { close: vi.fn() };
@@ -192,9 +183,7 @@ describe("web auto-reply", () => {
       | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
       | undefined;
     const listenerFactory = async (opts: {
-      onMessage: (
-        msg: import("./inbound.js").WebInboundMessage,
-      ) => Promise<void>;
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
     }) => {
       capturedOnMessage = opts.onMessage;
       return { close: vi.fn() };
@@ -244,9 +233,7 @@ describe("web auto-reply", () => {
       | undefined;
     const reply = vi.fn();
     const listenerFactory = async (opts: {
-      onMessage: (
-        msg: import("./inbound.js").WebInboundMessage,
-      ) => Promise<void>;
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
     }) => {
       capturedOnMessage = opts.onMessage;
       return { close: vi.fn() };
@@ -271,6 +258,55 @@ describe("web auto-reply", () => {
     expect(reply).toHaveBeenCalledWith("🦞 hello there");
     resetLoadConfigMock();
   });
+  it("defaults responsePrefix for self-chat replies when unset", async () => {
+    setLoadConfigMock(() => ({
+      agents: {
+        list: [
+          {
+            id: "main",
+            default: true,
+            identity: { name: "Mainbot", emoji: "🦞", theme: "space lobster" },
+          },
+        ],
+      },
+      channels: { whatsapp: { allowFrom: ["+1555"] } },
+      messages: {
+        messagePrefix: undefined,
+        responsePrefix: undefined,
+      },
+    }));
+
+    let capturedOnMessage:
+      | ((msg: import("./inbound.js").WebInboundMessage) => Promise<void>)
+      | undefined;
+    const reply = vi.fn();
+    const listenerFactory = async (opts: {
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
+    }) => {
+      capturedOnMessage = opts.onMessage;
+      return { close: vi.fn() };
+    };
+
+    const resolver = vi.fn().mockResolvedValue({ text: "hello there" });
+
+    await monitorWebChannel(false, listenerFactory, false, resolver);
+    expect(capturedOnMessage).toBeDefined();
+
+    await capturedOnMessage?.({
+      body: "hi",
+      from: "+1555",
+      to: "+1555",
+      selfE164: "+1555",
+      chatType: "direct",
+      id: "msg1",
+      sendComposing: vi.fn(),
+      reply,
+      sendMedia: vi.fn(),
+    });
+
+    expect(reply).toHaveBeenCalledWith("[Mainbot] hello there");
+    resetLoadConfigMock();
+  });
   it("does not deliver HEARTBEAT_OK responses", async () => {
     setLoadConfigMock(() => ({
       channels: { whatsapp: { allowFrom: ["*"] } },
@@ -285,9 +321,7 @@ describe("web auto-reply", () => {
       | undefined;
     const reply = vi.fn();
     const listenerFactory = async (opts: {
-      onMessage: (
-        msg: import("./inbound.js").WebInboundMessage,
-      ) => Promise<void>;
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
     }) => {
       capturedOnMessage = opts.onMessage;
       return { close: vi.fn() };
@@ -326,9 +360,7 @@ describe("web auto-reply", () => {
       | undefined;
     const reply = vi.fn();
     const listenerFactory = async (opts: {
-      onMessage: (
-        msg: import("./inbound.js").WebInboundMessage,
-      ) => Promise<void>;
+      onMessage: (msg: import("./inbound.js").WebInboundMessage) => Promise<void>;
     }) => {
       capturedOnMessage = opts.onMessage;
       return { close: vi.fn() };

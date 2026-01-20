@@ -48,6 +48,7 @@ Row shape (JSON):
 - `thinkingLevel`, `verboseLevel`, `systemSent`, `abortedLastRun`
 - `sendPolicy` (session override if set)
 - `lastChannel`, `lastTo`
+- `deliveryContext` (normalized `{ channel, to, accountId }` when available)
 - `transcriptPath` (best-effort path derived from store dir + sessionId)
 - `messages?` (only when `messageLimit > 0`)
 
@@ -145,6 +146,7 @@ Behavior:
 - Always non-blocking: returns `{ status: "accepted", runId, childSessionKey }` immediately.
 - After completion, Clawdbot runs a sub-agent **announce step** and posts the result to the requester chat channel.
 - Reply exactly `ANNOUNCE_SKIP` during the announce step to stay silent.
+- Announce replies are normalized to `Status`/`Result`/`Notes`; `Status` comes from runtime outcome (not model text).
 - Sub-agent sessions are auto-archived after `agents.defaults.subagents.archiveAfterMinutes` (default: 60).
 - Announce replies include a stats line (runtime, tokens, sessionKey/sessionId, transcript path, and optional cost).
 

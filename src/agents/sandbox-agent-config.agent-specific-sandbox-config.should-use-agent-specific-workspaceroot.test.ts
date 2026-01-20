@@ -33,8 +33,7 @@ vi.mock("node:child_process", async (importOriginal) => {
         dockerArgs[0] === "inspect" &&
         dockerArgs[1] === "-f" &&
         dockerArgs[2] === "{{.State.Running}}";
-      const shouldSucceedImageInspect =
-        dockerArgs[0] === "image" && dockerArgs[1] === "inspect";
+      const shouldSucceedImageInspect = dockerArgs[0] === "image" && dockerArgs[1] === "inspect";
 
       const code = shouldFailContainerInspect ? 1 : 0;
       if (shouldSucceedImageInspect) {
@@ -47,9 +46,17 @@ vi.mock("node:child_process", async (importOriginal) => {
   };
 });
 
+vi.mock("../skills.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../skills.js")>();
+  return {
+    ...actual,
+    syncSkillsToWorkspace: vi.fn(async () => undefined),
+  };
+});
 describe("Agent-specific sandbox config", () => {
   beforeEach(() => {
     spawnCalls.length = 0;
+    vi.resetModules();
   });
 
   it("should use agent-specific workspaceRoot", async () => {
@@ -85,9 +92,7 @@ describe("Agent-specific sandbox config", () => {
     });
 
     expect(context).toBeDefined();
-    expect(context?.workspaceDir).toContain(
-      path.resolve("/tmp/isolated-sandboxes"),
-    );
+    expect(context?.workspaceDir).toContain(path.resolve("/tmp/isolated-sandboxes"));
   });
   it("should prefer agent config over global for multiple agents", async () => {
     const { resolveSandboxContext } = await import("./sandbox.js");

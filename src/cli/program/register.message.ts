@@ -18,6 +18,7 @@ import { registerMessageReactionsCommands } from "./message/register.reactions.j
 import { registerMessageReadEditDeleteCommands } from "./message/register.read-edit-delete.js";
 import { registerMessageSendCommand } from "./message/register.send.js";
 import { registerMessageThreadCommands } from "./message/register.thread.js";
+import { registerMessageBroadcastCommand } from "./message/register.broadcast.js";
 
 export function registerMessageCommands(program: Command, ctx: ProgramContext) {
   const message = program
@@ -28,15 +29,12 @@ export function registerMessageCommands(program: Command, ctx: ProgramContext) {
       () =>
         `
 Examples:
-  clawdbot message send --to +15555550123 --message "Hi"
-  clawdbot message send --to +15555550123 --message "Hi" --media photo.jpg
-  clawdbot message poll --channel discord --to channel:123 --poll-question "Snack?" --poll-option Pizza --poll-option Sushi
-  clawdbot message react --channel discord --to 123 --message-id 456 --emoji "✅"
+  clawdbot message send --target +15555550123 --message "Hi"
+  clawdbot message send --target +15555550123 --message "Hi" --media photo.jpg
+  clawdbot message poll --channel discord --target channel:123 --poll-question "Snack?" --poll-option Pizza --poll-option Sushi
+  clawdbot message react --channel discord --target 123 --message-id 456 --emoji "✅"
 
-${theme.muted("Docs:")} ${formatDocsLink(
-          "/cli/message",
-          "docs.clawd.bot/cli/message",
-        )}`,
+${theme.muted("Docs:")} ${formatDocsLink("/cli/message", "docs.clawd.bot/cli/message")}`,
     )
     .action(() => {
       message.help({ error: true });
@@ -44,6 +42,7 @@ ${theme.muted("Docs:")} ${formatDocsLink(
 
   const helpers = createMessageCliHelpers(message, ctx.messageChannelOptions);
   registerMessageSendCommand(message, helpers);
+  registerMessageBroadcastCommand(message, helpers);
   registerMessagePollCommand(message, helpers);
   registerMessageReactionsCommands(message, helpers);
   registerMessageReadEditDeleteCommands(message, helpers);

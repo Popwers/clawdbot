@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withTempHome as withTempHomeBase } from "../../test/helpers/temp-home.js";
@@ -7,8 +8,7 @@ vi.mock("../agents/pi-embedded.js", () => ({
   compactEmbeddedPiSession: vi.fn(),
   runEmbeddedPiAgent: vi.fn(),
   queueEmbeddedPiMessage: vi.fn().mockReturnValue(false),
-  resolveEmbeddedSessionLane: (key: string) =>
-    `session:${key.trim() || "main"}`,
+  resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
   isEmbeddedPiRunActive: vi.fn().mockReturnValue(false),
   isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),
 }));
@@ -48,10 +48,7 @@ const modelCatalogMocks = vi.hoisted(() => ({
 
 vi.mock("../agents/model-catalog.js", () => modelCatalogMocks);
 
-import {
-  abortEmbeddedPiRun,
-  runEmbeddedPiAgent,
-} from "../agents/pi-embedded.js";
+import { abortEmbeddedPiRun, runEmbeddedPiAgent } from "../agents/pi-embedded.js";
 import { getReplyFromConfig } from "./reply.js";
 
 const _MAIN_SESSION_KEY = "agent:main:main";
@@ -67,6 +64,7 @@ vi.mock("../web/session.js", () => webMocks);
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   return withTempHomeBase(
     async (home) => {
+      await mkdir(join(home, ".clawdbot", "agents", "main", "sessions"), { recursive: true });
       vi.mocked(runEmbeddedPiAgent).mockClear();
       vi.mocked(abortEmbeddedPiRun).mockClear();
       return await fn(home);
@@ -113,7 +111,7 @@ describe("group intro prompts", () => {
       await getReplyFromConfig(
         {
           Body: "status update",
-          From: "group:dev",
+          From: "discord:group:dev",
           To: "+1888",
           ChatType: "group",
           GroupSubject: "Release Squad",
@@ -126,8 +124,7 @@ describe("group intro prompts", () => {
 
       expect(runEmbeddedPiAgent).toHaveBeenCalledOnce();
       const extraSystemPrompt =
-        vi.mocked(runEmbeddedPiAgent).mock.calls.at(-1)?.[0]
-          ?.extraSystemPrompt ?? "";
+        vi.mocked(runEmbeddedPiAgent).mock.calls.at(-1)?.[0]?.extraSystemPrompt ?? "";
       expect(extraSystemPrompt).toBe(
         `You are replying inside the Discord group "Release Squad". Group members: Alice, Bob. Activation: trigger-only (you are invoked only when explicitly mentioned; recent context may be included). ${groupParticipationNote} Address the specific sender noted in the message context.`,
       );
@@ -158,8 +155,7 @@ describe("group intro prompts", () => {
 
       expect(runEmbeddedPiAgent).toHaveBeenCalledOnce();
       const extraSystemPrompt =
-        vi.mocked(runEmbeddedPiAgent).mock.calls.at(-1)?.[0]
-          ?.extraSystemPrompt ?? "";
+        vi.mocked(runEmbeddedPiAgent).mock.calls.at(-1)?.[0]?.extraSystemPrompt ?? "";
       expect(extraSystemPrompt).toBe(
         `You are replying inside the WhatsApp group "Ops". Activation: trigger-only (you are invoked only when explicitly mentioned; recent context may be included). WhatsApp IDs: SenderId is the participant JID; [message_id: ...] is the message id for reactions (use SenderId as participant). ${groupParticipationNote} Address the specific sender noted in the message context.`,
       );
@@ -178,7 +174,7 @@ describe("group intro prompts", () => {
       await getReplyFromConfig(
         {
           Body: "ping",
-          From: "group:tg",
+          From: "telegram:group:tg",
           To: "+1777",
           ChatType: "group",
           GroupSubject: "Dev Chat",
@@ -190,8 +186,7 @@ describe("group intro prompts", () => {
 
       expect(runEmbeddedPiAgent).toHaveBeenCalledOnce();
       const extraSystemPrompt =
-        vi.mocked(runEmbeddedPiAgent).mock.calls.at(-1)?.[0]
-          ?.extraSystemPrompt ?? "";
+        vi.mocked(runEmbeddedPiAgent).mock.calls.at(-1)?.[0]?.extraSystemPrompt ?? "";
       expect(extraSystemPrompt).toBe(
         `You are replying inside the Telegram group "Dev Chat". Activation: trigger-only (you are invoked only when explicitly mentioned; recent context may be included). ${groupParticipationNote} Address the specific sender noted in the message context.`,
       );

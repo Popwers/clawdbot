@@ -8,24 +8,18 @@ import {
   complete,
   type Model,
 } from "@mariozechner/pi-ai";
-import {
-  discoverAuthStorage,
-  discoverModels,
-} from "@mariozechner/pi-coding-agent";
+import { discoverAuthStorage, discoverModels } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
 import type { ClawdbotConfig } from "../../config/config.js";
 import { resolveUserPath } from "../../utils.js";
 import { loadWebMedia } from "../../web/media.js";
-import {
-  ensureAuthProfileStore,
-  listProfilesForProvider,
-} from "../auth-profiles.js";
+import { ensureAuthProfileStore, listProfilesForProvider } from "../auth-profiles.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../defaults.js";
 import { minimaxUnderstandImage } from "../minimax-vlm.js";
 import { getApiKeyForModel, resolveEnvApiKey } from "../model-auth.js";
 import { runWithImageModelFallback } from "../model-fallback.js";
-import { parseModelRef } from "../model-selection.js";
+import { resolveConfiguredModelRef } from "../model-selection.js";
 import { ensureClawdbotModelsJson } from "../models-config.js";
 import { assertSandboxPath } from "../sandbox-paths.js";
 import type { AnyAgentTool } from "./common.js";
@@ -48,24 +42,18 @@ function resolveDefaultModelRef(cfg?: ClawdbotConfig): {
   provider: string;
   model: string;
 } {
-  const modelConfig = cfg?.agents?.defaults?.model as
-    | { primary?: string }
-    | string
-    | undefined;
-  const raw =
-    typeof modelConfig === "string"
-      ? modelConfig.trim()
-      : modelConfig?.primary?.trim();
-  const parsed =
-    parseModelRef(raw ?? "", DEFAULT_PROVIDER) ??
-    ({ provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL } as const);
-  return { provider: parsed.provider, model: parsed.model };
+  if (cfg) {
+    const resolved = resolveConfiguredModelRef({
+      cfg,
+      defaultProvider: DEFAULT_PROVIDER,
+      defaultModel: DEFAULT_MODEL,
+    });
+    return { provider: resolved.provider, model: resolved.model };
+  }
+  return { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL };
 }
 
-function hasAuthForProvider(params: {
-  provider: string;
-  agentDir: string;
-}): boolean {
+function hasAuthForProvider(params: { provider: string; agentDir: string }): boolean {
   if (resolveEnvApiKey(params.provider)?.apiKey) return true;
   const store = ensureAuthProfileStore(params.agentDir, {
     allowKeychainPrompt: false,
@@ -85,6 +73,10 @@ export function resolveImageModelConfigForTool(params: {
   cfg?: ClawdbotConfig;
   agentDir: string;
 }): ImageModelConfig | null {
+  // Note: We intentionally do NOT gate based on primarySupportsImages here.
+  // Even when the primary model supports images, we keep the tool available
+  // because images are auto-injected into prompts (see attempt.ts detectAndLoadPromptImages).
+  // The tool description is adjusted via modelHasVision to discourage redundant usage.
   const explicit = coerceImageModelConfig(params.cfg);
   if (explicit.primary?.trim() || (explicit.fallbacks?.length ?? 0) > 0) {
     return explicit;
@@ -156,33 +148,18 @@ export function resolveImageModelConfigForTool(params: {
   return null;
 }
 
-function pickMaxBytes(
-  cfg?: ClawdbotConfig,
-  maxBytesMb?: number,
-): number | undefined {
-  if (
-    typeof maxBytesMb === "number" &&
-    Number.isFinite(maxBytesMb) &&
-    maxBytesMb > 0
-  ) {
+function pickMaxBytes(cfg?: ClawdbotConfig, maxBytesMb?: number): number | undefined {
+  if (typeof maxBytesMb === "number" && Number.isFinite(maxBytesMb) && maxBytesMb > 0) {
     return Math.floor(maxBytesMb * 1024 * 1024);
   }
   const configured = cfg?.agents?.defaults?.mediaMaxMb;
-  if (
-    typeof configured === "number" &&
-    Number.isFinite(configured) &&
-    configured > 0
-  ) {
+  if (typeof configured === "number" && Number.isFinite(configured) && configured > 0) {
     return Math.floor(configured * 1024 * 1024);
   }
   return undefined;
 }
 
-function buildImageContext(
-  prompt: string,
-  base64: string,
-  mimeType: string,
-): Context {
+function buildImageContext(prompt: string, base64: string, mimeType: string): Context {
   return {
     messages: [
       {
@@ -201,8 +178,7 @@ async function resolveSandboxedImagePath(params: {
   sandboxRoot: string;
   imagePath: string;
 }): Promise<{ resolved: string; rewrittenFrom?: string }> {
-  const normalize = (p: string) =>
-    p.startsWith("file://") ? p.slice("file://".length) : p;
+  const normalize = (p: string) => (p.startsWith("file://") ? p.slice("file://".length) : p);
   const filePath = normalize(params.imagePath);
   try {
     const out = await assertSandboxPath({
@@ -269,9 +245,7 @@ async function runImagePrompt(params: {
         throw new Error(`Unknown model: ${provider}/${modelId}`);
       }
       if (!model.input?.includes("image")) {
-        throw new Error(
-          `Model does not support images: ${provider}/${modelId}`,
-        );
+        throw new Error(`Model does not support images: ${provider}/${modelId}`);
       }
       const apiKeyInfo = await getApiKeyForModel({
         model,
@@ -291,11 +265,7 @@ async function runImagePrompt(params: {
         return { text, provider: model.provider, model: model.id };
       }
 
-      const context = buildImageContext(
-        params.prompt,
-        params.base64,
-        params.mimeType,
-      );
+      const context = buildImageContext(params.prompt, params.base64, params.mimeType);
       const message = (await complete(model, context, {
         apiKey: apiKeyInfo.apiKey,
         maxTokens: 512,
@@ -325,6 +295,8 @@ export function createImageTool(options?: {
   config?: ClawdbotConfig;
   agentDir?: string;
   sandboxRoot?: string;
+  /** If true, the model has native vision capability and images in the prompt are auto-injected */
+  modelHasVision?: boolean;
 }): AnyAgentTool | null {
   const agentDir = options?.agentDir?.trim();
   if (!agentDir) {
@@ -339,11 +311,17 @@ export function createImageTool(options?: {
     agentDir,
   });
   if (!imageModelConfig) return null;
+
+  // If model has native vision, images in the prompt are auto-injected
+  // so this tool is only needed when image wasn't provided in the prompt
+  const description = options?.modelHasVision
+    ? "Analyze an image with a vision model. Only use this tool when the image was NOT already provided in the user's message. Images mentioned in the prompt are automatically visible to you."
+    : "Analyze an image with the configured image model (agents.defaults.imageModel). Provide a prompt and image path or URL.";
+
   return {
     label: "Image",
     name: "image",
-    description:
-      "Analyze an image with the configured image model (agents.defaults.imageModel). Provide a prompt and image path or URL.",
+    description,
     parameters: Type.Object({
       prompt: Type.Optional(Type.String()),
       image: Type.String(),
@@ -351,12 +329,8 @@ export function createImageTool(options?: {
       maxBytesMb: Type.Optional(Type.Number()),
     }),
     execute: async (_toolCallId, args) => {
-      const record =
-        args && typeof args === "object"
-          ? (args as Record<string, unknown>)
-          : {};
-      const imageRawInput =
-        typeof record.image === "string" ? record.image.trim() : "";
+      const record = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+      const imageRawInput = typeof record.image === "string" ? record.image.trim() : "";
       const imageRaw = imageRawInput.startsWith("@")
         ? imageRawInput.slice(1).trim()
         : imageRawInput;
@@ -372,13 +346,7 @@ export function createImageTool(options?: {
       const isFileUrl = /^file:/i.test(imageRaw);
       const isHttpUrl = /^https?:\/\//i.test(imageRaw);
       const isDataUrl = /^data:/i.test(imageRaw);
-      if (
-        hasScheme &&
-        !looksLikeWindowsDrivePath &&
-        !isFileUrl &&
-        !isHttpUrl &&
-        !isDataUrl
-      ) {
+      if (hasScheme && !looksLikeWindowsDrivePath && !isFileUrl && !isHttpUrl && !isDataUrl) {
         return {
           content: [
             {
@@ -397,11 +365,8 @@ export function createImageTool(options?: {
           ? record.prompt.trim()
           : DEFAULT_PROMPT;
       const modelOverride =
-        typeof record.model === "string" && record.model.trim()
-          ? record.model.trim()
-          : undefined;
-      const maxBytesMb =
-        typeof record.maxBytesMb === "number" ? record.maxBytesMb : undefined;
+        typeof record.model === "string" && record.model.trim() ? record.model.trim() : undefined;
+      const maxBytesMb = typeof record.maxBytesMb === "number" ? record.maxBytesMb : undefined;
       const maxBytes = pickMaxBytes(options?.config, maxBytesMb);
 
       const sandboxRoot = options?.sandboxRoot?.trim();
@@ -415,19 +380,18 @@ export function createImageTool(options?: {
         if (imageRaw.startsWith("~")) return resolveUserPath(imageRaw);
         return imageRaw;
       })();
-      const resolvedPathInfo: { resolved: string; rewrittenFrom?: string } =
-        isDataUrl
-          ? { resolved: "" }
-          : sandboxRoot
-            ? await resolveSandboxedImagePath({
-                sandboxRoot,
-                imagePath: resolvedImage,
-              })
-            : {
-                resolved: resolvedImage.startsWith("file://")
-                  ? resolvedImage.slice("file://".length)
-                  : resolvedImage,
-              };
+      const resolvedPathInfo: { resolved: string; rewrittenFrom?: string } = isDataUrl
+        ? { resolved: "" }
+        : sandboxRoot
+          ? await resolveSandboxedImagePath({
+              sandboxRoot,
+              imagePath: resolvedImage,
+            })
+          : {
+              resolved: resolvedImage.startsWith("file://")
+                ? resolvedImage.slice("file://".length)
+                : resolvedImage,
+            };
       const resolvedPath = isDataUrl ? null : resolvedPathInfo.resolved;
 
       const media = isDataUrl

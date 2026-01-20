@@ -69,11 +69,7 @@ function buildDistCandidates(...inputs: string[]): string[] {
   return candidates;
 }
 
-function appendDistCandidates(
-  candidates: string[],
-  seen: Set<string>,
-  baseDir: string,
-): void {
+function appendDistCandidates(candidates: string[], seen: Set<string>, baseDir: string): void {
   const distDir = path.resolve(baseDir, "dist");
   const distEntries = [
     path.join(distDir, "index.js"),
@@ -142,23 +138,21 @@ async function resolveBinaryPath(binary: string): Promise<string> {
   }
 }
 
-export async function resolveGatewayProgramArguments(params: {
-  port: number;
+async function resolveCliProgramArguments(params: {
+  args: string[];
   dev?: boolean;
   runtime?: GatewayRuntimePreference;
   nodePath?: string;
 }): Promise<GatewayProgramArgs> {
-  const gatewayArgs = ["gateway", "--port", String(params.port)];
   const execPath = process.execPath;
   const runtime = params.runtime ?? "auto";
 
   if (runtime === "node") {
     const nodePath =
-      params.nodePath ??
-      (isNodeRuntime(execPath) ? execPath : await resolveNodePath());
+      params.nodePath ?? (isNodeRuntime(execPath) ? execPath : await resolveNodePath());
     const cliEntrypointPath = await resolveCliEntrypointPathForService();
     return {
-      programArguments: [nodePath, cliEntrypointPath, ...gatewayArgs],
+      programArguments: [nodePath, cliEntrypointPath, ...params.args],
     };
   }
 
@@ -167,11 +161,9 @@ export async function resolveGatewayProgramArguments(params: {
       const repoRoot = resolveRepoRootForDev();
       const devCliPath = path.join(repoRoot, "src", "index.ts");
       await fs.access(devCliPath);
-      const bunPath = isBunRuntime(execPath)
-        ? execPath
-        : await resolveBunPath();
+      const bunPath = isBunRuntime(execPath) ? execPath : await resolveBunPath();
       return {
-        programArguments: [bunPath, devCliPath, ...gatewayArgs],
+        programArguments: [bunPath, devCliPath, ...params.args],
         workingDirectory: repoRoot,
       };
     }
@@ -179,7 +171,7 @@ export async function resolveGatewayProgramArguments(params: {
     const bunPath = isBunRuntime(execPath) ? execPath : await resolveBunPath();
     const cliEntrypointPath = await resolveCliEntrypointPathForService();
     return {
-      programArguments: [bunPath, cliEntrypointPath, ...gatewayArgs],
+      programArguments: [bunPath, cliEntrypointPath, ...params.args],
     };
   }
 
@@ -187,12 +179,12 @@ export async function resolveGatewayProgramArguments(params: {
     try {
       const cliEntrypointPath = await resolveCliEntrypointPathForService();
       return {
-        programArguments: [execPath, cliEntrypointPath, ...gatewayArgs],
+        programArguments: [execPath, cliEntrypointPath, ...params.args],
       };
     } catch (error) {
       // If running under bun or another runtime that can execute TS directly
       if (!isNodeRuntime(execPath)) {
-        return { programArguments: [execPath, ...gatewayArgs] };
+        return { programArguments: [execPath, ...params.args] };
       }
       throw error;
     }
@@ -206,7 +198,7 @@ export async function resolveGatewayProgramArguments(params: {
   // If already running under bun, use current execPath
   if (isBunRuntime(execPath)) {
     return {
-      programArguments: [execPath, devCliPath, ...gatewayArgs],
+      programArguments: [execPath, devCliPath, ...params.args],
       workingDirectory: repoRoot,
     };
   }
@@ -214,7 +206,46 @@ export async function resolveGatewayProgramArguments(params: {
   // Otherwise resolve bun from PATH
   const bunPath = await resolveBunPath();
   return {
-    programArguments: [bunPath, devCliPath, ...gatewayArgs],
+    programArguments: [bunPath, devCliPath, ...params.args],
     workingDirectory: repoRoot,
   };
+}
+
+export async function resolveGatewayProgramArguments(params: {
+  port: number;
+  dev?: boolean;
+  runtime?: GatewayRuntimePreference;
+  nodePath?: string;
+}): Promise<GatewayProgramArgs> {
+  const gatewayArgs = ["gateway", "--port", String(params.port)];
+  return resolveCliProgramArguments({
+    args: gatewayArgs,
+    dev: params.dev,
+    runtime: params.runtime,
+    nodePath: params.nodePath,
+  });
+}
+
+export async function resolveNodeProgramArguments(params: {
+  host: string;
+  port: number;
+  tls?: boolean;
+  tlsFingerprint?: string;
+  nodeId?: string;
+  displayName?: string;
+  dev?: boolean;
+  runtime?: GatewayRuntimePreference;
+  nodePath?: string;
+}): Promise<GatewayProgramArgs> {
+  const args = ["node", "start", "--host", params.host, "--port", String(params.port)];
+  if (params.tls || params.tlsFingerprint) args.push("--tls");
+  if (params.tlsFingerprint) args.push("--tls-fingerprint", params.tlsFingerprint);
+  if (params.nodeId) args.push("--node-id", params.nodeId);
+  if (params.displayName) args.push("--display-name", params.displayName);
+  return resolveCliProgramArguments({
+    args,
+    dev: params.dev,
+    runtime: params.runtime,
+    nodePath: params.nodePath,
+  });
 }

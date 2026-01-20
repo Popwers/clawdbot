@@ -48,9 +48,7 @@ describe("createClawdbotCodingTools", () => {
         execute,
       };
 
-      const wrapped = __testing.wrapToolParamNormalization(tool, [
-        { keys: ["path", "file_path"] },
-      ]);
+      const wrapped = __testing.wrapToolParamNormalization(tool, [{ keys: ["path", "file_path"] }]);
 
       await wrapped.execute("tool-1", { file_path: "foo.txt", content: "x" });
       expect(execute).toHaveBeenCalledWith(
@@ -63,9 +61,9 @@ describe("createClawdbotCodingTools", () => {
       await expect(wrapped.execute("tool-2", { content: "x" })).rejects.toThrow(
         /Missing required parameter/,
       );
-      await expect(
-        wrapped.execute("tool-3", { file_path: "   ", content: "x" }),
-      ).rejects.toThrow(/Missing required parameter/);
+      await expect(wrapped.execute("tool-3", { file_path: "   ", content: "x" })).rejects.toThrow(
+        /Missing required parameter/,
+      );
     });
   });
 
@@ -74,6 +72,11 @@ describe("createClawdbotCodingTools", () => {
     const schema = browser.parameters as { type?: unknown; anyOf?: unknown };
     expect(schema.type).toBe("object");
     expect(schema.anyOf).toBeUndefined();
+  });
+  it("mentions Chrome extension relay in browser tool description", () => {
+    const browser = createBrowserTool();
+    expect(browser.description).toMatch(/Chrome extension/i);
+    expect(browser.description).toMatch(/profile="chrome"/i);
   });
   it("keeps browser tool schema properties after normalization", () => {
     const tools = createClawdbotCodingTools();
@@ -126,16 +129,16 @@ describe("createClawdbotCodingTools", () => {
     expect(Array.isArray(action?.enum)).toBe(true);
     expect(action?.enum).toContain("act");
 
-    const format = parameters.properties?.format as
+    const snapshotFormat = parameters.properties?.snapshotFormat as
       | {
           type?: unknown;
           enum?: unknown[];
           anyOf?: unknown[];
         }
       | undefined;
-    expect(format?.type).toBe("string");
-    expect(format?.anyOf).toBeUndefined();
-    expect(format?.enum).toEqual(["aria", "ai"]);
+    expect(snapshotFormat?.type).toBe("string");
+    expect(snapshotFormat?.anyOf).toBeUndefined();
+    expect(snapshotFormat?.enum).toEqual(["aria", "ai"]);
   });
   it("inlines local $ref before removing unsupported keywords", () => {
     const cleaned = __testing.cleanToolSchemaForGemini({
@@ -157,6 +160,30 @@ describe("createClawdbotCodingTools", () => {
       type: "string",
       enum: ["a", "b"],
     });
+  });
+  it("cleans tuple items schemas", () => {
+    const cleaned = __testing.cleanToolSchemaForGemini({
+      type: "object",
+      properties: {
+        tuples: {
+          type: "array",
+          items: [
+            { type: "string", format: "uuid" },
+            { type: "number", minimum: 1 },
+          ],
+        },
+      },
+    }) as {
+      properties?: Record<string, unknown>;
+    };
+
+    const tuples = cleaned.properties?.tuples as { items?: unknown } | undefined;
+    const items = Array.isArray(tuples?.items) ? tuples?.items : [];
+    const first = items[0] as { format?: unknown } | undefined;
+    const second = items[1] as { minimum?: unknown } | undefined;
+
+    expect(first?.format).toBeUndefined();
+    expect(second?.minimum).toBeUndefined();
   });
   it("drops null-only union variants without flattening other unions", () => {
     const cleaned = __testing.cleanToolSchemaForGemini({

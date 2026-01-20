@@ -1,24 +1,45 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HEARTBEAT_PROMPT } from "../auto-reply/heartbeat.js";
 import * as replyModule from "../auto-reply/reply.js";
 import type { ClawdbotConfig } from "../config/config.js";
 import {
   resolveAgentIdFromSessionKey,
+  resolveAgentMainSessionKey,
   resolveMainSessionKey,
   resolveStorePath,
 } from "../config/sessions.js";
 import {
+  isHeartbeatEnabledForAgent,
   resolveHeartbeatIntervalMs,
   resolveHeartbeatPrompt,
   runHeartbeatOnce,
 } from "./heartbeat-runner.js";
 import { resolveHeartbeatDeliveryTarget } from "./outbound/targets.js";
+import { setActivePluginRegistry } from "../plugins/runtime.js";
+import { createPluginRuntime } from "../plugins/runtime/index.js";
+import { createTestRegistry } from "../test-utils/channel-plugins.js";
+import { telegramPlugin } from "../../extensions/telegram/src/channel.js";
+import { whatsappPlugin } from "../../extensions/whatsapp/src/channel.js";
+import { setTelegramRuntime } from "../../extensions/telegram/src/runtime.js";
+import { setWhatsAppRuntime } from "../../extensions/whatsapp/src/runtime.js";
 
 // Avoid pulling optional runtime deps during isolated runs.
 vi.mock("jiti", () => ({ createJiti: () => () => ({}) }));
+
+beforeEach(() => {
+  const runtime = createPluginRuntime();
+  setTelegramRuntime(runtime);
+  setWhatsAppRuntime(runtime);
+  setActivePluginRegistry(
+    createTestRegistry([
+      { pluginId: "whatsapp", plugin: whatsappPlugin, source: "test" },
+      { pluginId: "telegram", plugin: telegramPlugin, source: "test" },
+    ]),
+  );
+});
 
 describe("resolveHeartbeatIntervalMs", () => {
   it("returns default when unset", () => {
@@ -55,6 +76,16 @@ describe("resolveHeartbeatIntervalMs", () => {
       }),
     ).toBe(2 * 60 * 60_000);
   });
+
+  it("uses explicit heartbeat overrides when provided", () => {
+    expect(
+      resolveHeartbeatIntervalMs(
+        { agents: { defaults: { heartbeat: { every: "30m" } } } },
+        undefined,
+        { every: "5m" },
+      ),
+    ).toBe(5 * 60_000);
+  });
 });
 
 describe("resolveHeartbeatPrompt", () => {
@@ -67,6 +98,30 @@ describe("resolveHeartbeatPrompt", () => {
       agents: { defaults: { heartbeat: { prompt: "  ping  " } } },
     };
     expect(resolveHeartbeatPrompt(cfg)).toBe("ping");
+  });
+});
+
+describe("isHeartbeatEnabledForAgent", () => {
+  it("enables only explicit heartbeat agents when configured", () => {
+    const cfg: ClawdbotConfig = {
+      agents: {
+        defaults: { heartbeat: { every: "30m" } },
+        list: [{ id: "main" }, { id: "ops", heartbeat: { every: "1h" } }],
+      },
+    };
+    expect(isHeartbeatEnabledForAgent(cfg, "main")).toBe(false);
+    expect(isHeartbeatEnabledForAgent(cfg, "ops")).toBe(true);
+  });
+
+  it("falls back to default agent when no explicit heartbeat entries", () => {
+    const cfg: ClawdbotConfig = {
+      agents: {
+        defaults: { heartbeat: { every: "30m" } },
+        list: [{ id: "main" }, { id: "ops" }],
+      },
+    };
+    expect(isHeartbeatEnabledForAgent(cfg, "main")).toBe(true);
+    expect(isHeartbeatEnabledForAgent(cfg, "ops")).toBe(false);
   });
 });
 
@@ -83,6 +138,9 @@ describe("resolveHeartbeatDeliveryTarget", () => {
     expect(resolveHeartbeatDeliveryTarget({ cfg, entry: baseEntry })).toEqual({
       channel: "none",
       reason: "target-none",
+      accountId: undefined,
+      lastChannel: undefined,
+      lastAccountId: undefined,
     });
   });
 
@@ -96,6 +154,9 @@ describe("resolveHeartbeatDeliveryTarget", () => {
     expect(resolveHeartbeatDeliveryTarget({ cfg, entry })).toEqual({
       channel: "whatsapp",
       to: "+1555",
+      accountId: undefined,
+      lastChannel: "whatsapp",
+      lastAccountId: undefined,
     });
   });
 
@@ -111,6 +172,9 @@ describe("resolveHeartbeatDeliveryTarget", () => {
     expect(resolveHeartbeatDeliveryTarget({ cfg, entry: baseEntry })).toEqual({
       channel: "whatsapp",
       to: "+555123",
+      accountId: undefined,
+      lastChannel: undefined,
+      lastAccountId: undefined,
     });
   });
 
@@ -124,6 +188,9 @@ describe("resolveHeartbeatDeliveryTarget", () => {
     expect(resolveHeartbeatDeliveryTarget({ cfg, entry })).toEqual({
       channel: "none",
       reason: "no-target",
+      accountId: undefined,
+      lastChannel: undefined,
+      lastAccountId: undefined,
     });
   });
 
@@ -141,6 +208,9 @@ describe("resolveHeartbeatDeliveryTarget", () => {
       channel: "whatsapp",
       to: "+1555",
       reason: "allowFrom-fallback",
+      accountId: undefined,
+      lastChannel: "whatsapp",
+      lastAccountId: undefined,
     });
   });
 
@@ -156,6 +226,9 @@ describe("resolveHeartbeatDeliveryTarget", () => {
     expect(resolveHeartbeatDeliveryTarget({ cfg, entry })).toEqual({
       channel: "whatsapp",
       to: "120363401234567890@g.us",
+      accountId: undefined,
+      lastChannel: "whatsapp",
+      lastAccountId: undefined,
     });
   });
 
@@ -166,11 +239,14 @@ describe("resolveHeartbeatDeliveryTarget", () => {
     const entry = {
       ...baseEntry,
       lastChannel: "whatsapp" as const,
-      lastTo: "whatsapp:group:120363401234567890@G.US",
+      lastTo: "whatsapp:120363401234567890@G.US",
     };
     expect(resolveHeartbeatDeliveryTarget({ cfg, entry })).toEqual({
       channel: "whatsapp",
       to: "120363401234567890@g.us",
+      accountId: undefined,
+      lastChannel: "whatsapp",
+      lastAccountId: undefined,
     });
   });
 
@@ -181,21 +257,70 @@ describe("resolveHeartbeatDeliveryTarget", () => {
     expect(resolveHeartbeatDeliveryTarget({ cfg, entry: baseEntry })).toEqual({
       channel: "telegram",
       to: "123",
+      accountId: undefined,
+      lastChannel: undefined,
+      lastAccountId: undefined,
+    });
+  });
+
+  it("prefers per-agent heartbeat overrides when provided", () => {
+    const cfg: ClawdbotConfig = {
+      agents: { defaults: { heartbeat: { target: "telegram", to: "123" } } },
+    };
+    const heartbeat = { target: "whatsapp", to: "+1555" } as const;
+    expect(
+      resolveHeartbeatDeliveryTarget({
+        cfg,
+        entry: { ...baseEntry, lastChannel: "whatsapp", lastTo: "+1999" },
+        heartbeat,
+      }),
+    ).toEqual({
+      channel: "whatsapp",
+      to: "+1555",
+      accountId: undefined,
+      lastChannel: "whatsapp",
+      lastAccountId: undefined,
     });
   });
 });
 
 describe("runHeartbeatOnce", () => {
+  it("skips when agent heartbeat is not enabled", async () => {
+    const cfg: ClawdbotConfig = {
+      agents: {
+        defaults: { heartbeat: { every: "30m" } },
+        list: [{ id: "main" }, { id: "ops", heartbeat: { every: "1h" } }],
+      },
+    };
+
+    const res = await runHeartbeatOnce({ cfg, agentId: "main" });
+    expect(res.status).toBe("skipped");
+    if (res.status === "skipped") {
+      expect(res.reason).toBe("disabled");
+    }
+  });
+
   it("uses the last non-empty payload for delivery", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdbot-hb-"));
     const storePath = path.join(tmpDir, "sessions.json");
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
     try {
+      const cfg: ClawdbotConfig = {
+        agents: {
+          defaults: {
+            heartbeat: { every: "5m", target: "whatsapp", to: "+1555" },
+          },
+        },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        session: { store: storePath },
+      };
+      const sessionKey = resolveMainSessionKey(cfg);
+
       await fs.writeFile(
         storePath,
         JSON.stringify(
           {
-            main: {
+            [sessionKey]: {
               sessionId: "sid",
               updatedAt: Date.now(),
               lastChannel: "whatsapp",
@@ -207,20 +332,7 @@ describe("runHeartbeatOnce", () => {
         ),
       );
 
-      const cfg: ClawdbotConfig = {
-        agents: {
-          defaults: {
-            heartbeat: { every: "5m", target: "whatsapp", to: "+1555" },
-          },
-        },
-        channels: { whatsapp: { allowFrom: ["*"] } },
-        session: { store: storePath },
-      };
-
-      replySpy.mockResolvedValue([
-        { text: "Let me check..." },
-        { text: "Final alert" },
-      ]);
+      replySpy.mockResolvedValue([{ text: "Let me check..." }, { text: "Final alert" }]);
       const sendWhatsApp = vi.fn().mockResolvedValue({
         messageId: "m1",
         toJid: "jid",
@@ -238,11 +350,132 @@ describe("runHeartbeatOnce", () => {
       });
 
       expect(sendWhatsApp).toHaveBeenCalledTimes(1);
-      expect(sendWhatsApp).toHaveBeenCalledWith(
-        "+1555",
-        "Final alert",
-        expect.any(Object),
+      expect(sendWhatsApp).toHaveBeenCalledWith("+1555", "Final alert", expect.any(Object));
+    } finally {
+      replySpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses per-agent heartbeat overrides and session keys", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdbot-hb-"));
+    const storePath = path.join(tmpDir, "sessions.json");
+    const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
+    try {
+      const cfg: ClawdbotConfig = {
+        agents: {
+          defaults: {
+            heartbeat: { every: "30m", prompt: "Default prompt" },
+          },
+          list: [
+            { id: "main", default: true },
+            {
+              id: "ops",
+              heartbeat: { every: "5m", target: "whatsapp", to: "+1555", prompt: "Ops check" },
+            },
+          ],
+        },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        session: { store: storePath },
+      };
+      const sessionKey = resolveAgentMainSessionKey({ cfg, agentId: "ops" });
+
+      await fs.writeFile(
+        storePath,
+        JSON.stringify(
+          {
+            [sessionKey]: {
+              sessionId: "sid",
+              updatedAt: Date.now(),
+              lastChannel: "whatsapp",
+              lastTo: "+1555",
+            },
+          },
+          null,
+          2,
+        ),
       );
+
+      replySpy.mockResolvedValue([{ text: "Final alert" }]);
+      const sendWhatsApp = vi.fn().mockResolvedValue({
+        messageId: "m1",
+        toJid: "jid",
+      });
+
+      await runHeartbeatOnce({
+        cfg,
+        agentId: "ops",
+        deps: {
+          sendWhatsApp,
+          getQueueSize: () => 0,
+          nowMs: () => 0,
+          webAuthExists: async () => true,
+          hasActiveWebListener: () => true,
+        },
+      });
+
+      expect(sendWhatsApp).toHaveBeenCalledTimes(1);
+      expect(sendWhatsApp).toHaveBeenCalledWith("+1555", "Final alert", expect.any(Object));
+      expect(replySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ Body: "Ops check", SessionKey: sessionKey }),
+        { isHeartbeat: true },
+        cfg,
+      );
+    } finally {
+      replySpy.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("suppresses duplicate heartbeat payloads within 24h", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdbot-hb-"));
+    const storePath = path.join(tmpDir, "sessions.json");
+    const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
+    try {
+      const cfg: ClawdbotConfig = {
+        agents: {
+          defaults: {
+            heartbeat: { every: "5m", target: "whatsapp", to: "+1555" },
+          },
+        },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        session: { store: storePath },
+      };
+      const sessionKey = resolveMainSessionKey(cfg);
+
+      await fs.writeFile(
+        storePath,
+        JSON.stringify(
+          {
+            [sessionKey]: {
+              sessionId: "sid",
+              updatedAt: Date.now(),
+              lastChannel: "whatsapp",
+              lastTo: "+1555",
+              lastHeartbeatText: "Final alert",
+              lastHeartbeatSentAt: 0,
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      replySpy.mockResolvedValue([{ text: "Final alert" }]);
+      const sendWhatsApp = vi.fn().mockResolvedValue({ messageId: "m1", toJid: "jid" });
+
+      await runHeartbeatOnce({
+        cfg,
+        deps: {
+          sendWhatsApp,
+          getQueueSize: () => 0,
+          nowMs: () => 60_000,
+          webAuthExists: async () => true,
+          hasActiveWebListener: () => true,
+        },
+      });
+
+      expect(sendWhatsApp).toHaveBeenCalledTimes(0);
     } finally {
       replySpy.mockRestore();
       await fs.rm(tmpDir, { recursive: true, force: true });
@@ -254,22 +487,6 @@ describe("runHeartbeatOnce", () => {
     const storePath = path.join(tmpDir, "sessions.json");
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
     try {
-      await fs.writeFile(
-        storePath,
-        JSON.stringify(
-          {
-            main: {
-              sessionId: "sid",
-              updatedAt: Date.now(),
-              lastProvider: "whatsapp",
-              lastTo: "+1555",
-            },
-          },
-          null,
-          2,
-        ),
-      );
-
       const cfg: ClawdbotConfig = {
         agents: {
           defaults: {
@@ -284,6 +501,23 @@ describe("runHeartbeatOnce", () => {
         channels: { whatsapp: { allowFrom: ["*"] } },
         session: { store: storePath },
       };
+      const sessionKey = resolveMainSessionKey(cfg);
+
+      await fs.writeFile(
+        storePath,
+        JSON.stringify(
+          {
+            [sessionKey]: {
+              sessionId: "sid",
+              updatedAt: Date.now(),
+              lastProvider: "whatsapp",
+              lastTo: "+1555",
+            },
+          },
+          null,
+          2,
+        ),
+      );
 
       replySpy.mockResolvedValue([
         { text: "Reasoning:\n_Because it helps_" },
@@ -312,12 +546,7 @@ describe("runHeartbeatOnce", () => {
         "Reasoning:\n_Because it helps_",
         expect.any(Object),
       );
-      expect(sendWhatsApp).toHaveBeenNthCalledWith(
-        2,
-        "+1555",
-        "Final alert",
-        expect.any(Object),
-      );
+      expect(sendWhatsApp).toHaveBeenNthCalledWith(2, "+1555", "Final alert", expect.any(Object));
     } finally {
       replySpy.mockRestore();
       await fs.rm(tmpDir, { recursive: true, force: true });
@@ -329,22 +558,6 @@ describe("runHeartbeatOnce", () => {
     const storePath = path.join(tmpDir, "sessions.json");
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
     try {
-      await fs.writeFile(
-        storePath,
-        JSON.stringify(
-          {
-            main: {
-              sessionId: "sid",
-              updatedAt: Date.now(),
-              lastProvider: "whatsapp",
-              lastTo: "+1555",
-            },
-          },
-          null,
-          2,
-        ),
-      );
-
       const cfg: ClawdbotConfig = {
         agents: {
           defaults: {
@@ -359,6 +572,23 @@ describe("runHeartbeatOnce", () => {
         channels: { whatsapp: { allowFrom: ["*"] } },
         session: { store: storePath },
       };
+      const sessionKey = resolveMainSessionKey(cfg);
+
+      await fs.writeFile(
+        storePath,
+        JSON.stringify(
+          {
+            [sessionKey]: {
+              sessionId: "sid",
+              updatedAt: Date.now(),
+              lastProvider: "whatsapp",
+              lastTo: "+1555",
+            },
+          },
+          null,
+          2,
+        ),
+      );
 
       replySpy.mockResolvedValue([
         { text: "Reasoning:\n_Because it helps_" },
@@ -395,12 +625,7 @@ describe("runHeartbeatOnce", () => {
 
   it("loads the default agent session from templated stores", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdbot-hb-"));
-    const storeTemplate = path.join(
-      tmpDir,
-      "agents",
-      "{agentId}",
-      "sessions.json",
-    );
+    const storeTemplate = path.join(tmpDir, "agents", "{agentId}", "sessions.json");
     const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
     try {
       const cfg: ClawdbotConfig = {

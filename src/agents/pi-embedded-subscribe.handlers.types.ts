@@ -1,6 +1,7 @@
 import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
 
 import type { ReasoningLevel } from "../auto-reply/thinking.js";
+import type { InlineCodeState } from "../markdown/code-spans.js";
 import type { EmbeddedBlockChunker } from "./pi-embedded-block-chunker.js";
 import type { MessagingToolSend } from "./pi-embedded-messaging.js";
 import type {
@@ -13,11 +14,18 @@ export type EmbeddedSubscribeLogger = {
   warn: (message: string) => void;
 };
 
+export type ToolErrorSummary = {
+  toolName: string;
+  meta?: string;
+  error?: string;
+};
+
 export type EmbeddedPiSubscribeState = {
   assistantTexts: string[];
   toolMetas: Array<{ toolName?: string; meta?: string }>;
   toolMetaById: Map<string, string | undefined>;
   toolSummaryById: Set<string>;
+  lastToolError?: ToolErrorSummary;
 
   blockReplyBreak: "text_end" | "message_end";
   reasoningMode: ReasoningLevel;
@@ -27,7 +35,7 @@ export type EmbeddedPiSubscribeState = {
 
   deltaBuffer: string;
   blockBuffer: string;
-  blockState: { thinking: boolean; final: boolean };
+  blockState: { thinking: boolean; final: boolean; inlineCode: InlineCodeState };
   lastStreamedAssistant?: string;
   lastStreamedReasoning?: string;
   lastBlockReplyText?: string;
@@ -55,10 +63,12 @@ export type EmbeddedPiSubscribeContext = {
   blockChunker: EmbeddedBlockChunker | null;
 
   shouldEmitToolResult: () => boolean;
+  shouldEmitToolOutput: () => boolean;
   emitToolSummary: (toolName?: string, meta?: string) => void;
+  emitToolOutput: (toolName?: string, meta?: string, output?: string) => void;
   stripBlockTags: (
     text: string,
-    state: { thinking: boolean; final: boolean },
+    state: { thinking: boolean; final: boolean; inlineCode?: InlineCodeState },
   ) => string;
   emitBlockChunk: (text: string) => void;
   flushBlockReplyBuffer: () => void;

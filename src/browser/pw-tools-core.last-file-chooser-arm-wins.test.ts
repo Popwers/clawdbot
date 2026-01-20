@@ -15,10 +15,12 @@ const sessionMocks = vi.hoisted(() => ({
     return currentPage;
   }),
   ensurePageState: vi.fn(() => pageState),
+  restoreRoleRefsForTarget: vi.fn(() => {}),
   refLocator: vi.fn(() => {
     if (!currentRefLocator) throw new Error("missing locator");
     return currentRefLocator;
   }),
+  rememberRoleRefsForTarget: vi.fn(() => {}),
 }));
 
 vi.mock("./pw-session.js", () => sessionMocks);
@@ -149,9 +151,7 @@ describe("pw-tools-core", () => {
     });
 
     expect(waitForTimeout).toHaveBeenCalledWith(50);
-    expect(
-      currentPage.locator as ReturnType<typeof vi.fn>,
-    ).toHaveBeenCalledWith("#main");
+    expect(currentPage.locator as ReturnType<typeof vi.fn>).toHaveBeenCalledWith("#main");
     expect(waitForSelector).toHaveBeenCalledWith({
       state: "visible",
       timeout: 1234,

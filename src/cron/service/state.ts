@@ -1,10 +1,5 @@
 import type { HeartbeatRunResult } from "../../infra/heartbeat-wake.js";
-import type {
-  CronJob,
-  CronJobCreate,
-  CronJobPatch,
-  CronStoreFile,
-} from "../types.js";
+import type { CronJob, CronJobCreate, CronJobPatch, CronStoreFile } from "../types.js";
 
 export type CronEvent = {
   jobId: string;
@@ -31,12 +26,12 @@ export type CronServiceDeps = {
   cronEnabled: boolean;
   enqueueSystemEvent: (text: string, opts?: { agentId?: string }) => void;
   requestHeartbeatNow: (opts?: { reason?: string }) => void;
-  runHeartbeatOnce?: (opts?: {
-    reason?: string;
-  }) => Promise<HeartbeatRunResult>;
+  runHeartbeatOnce?: (opts?: { reason?: string }) => Promise<HeartbeatRunResult>;
   runIsolatedAgentJob: (params: { job: CronJob; message: string }) => Promise<{
     status: "ok" | "error" | "skipped";
     summary?: string;
+    /** Last non-empty agent text output (not truncated). */
+    outputText?: string;
     error?: string;
   }>;
   onEvent?: (evt: CronEvent) => void;
@@ -55,9 +50,7 @@ export type CronServiceState = {
   warnedDisabled: boolean;
 };
 
-export function createCronServiceState(
-  deps: CronServiceDeps,
-): CronServiceState {
+export function createCronServiceState(deps: CronServiceDeps): CronServiceState {
   return {
     deps: { ...deps, nowMs: deps.nowMs ?? (() => Date.now()) },
     store: null,
@@ -83,9 +76,7 @@ export type CronRunResult =
   | { ok: true; ran: false; reason: "not-due" }
   | { ok: false };
 
-export type CronRemoveResult =
-  | { ok: true; removed: boolean }
-  | { ok: false; removed: false };
+export type CronRemoveResult = { ok: true; removed: boolean } | { ok: false; removed: false };
 
 export type CronAddResult = CronJob;
 export type CronUpdateResult = CronJob;

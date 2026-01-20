@@ -1,5 +1,6 @@
 export const CHANNEL_MESSAGE_ACTION_NAMES = [
   "send",
+  "broadcast",
   "poll",
   "react",
   "reactions",
@@ -39,5 +40,4 @@ export const CHANNEL_MESSAGE_ACTION_NAMES = [
   "ban",
 ] as const;
 
-export type ChannelMessageActionName =
-  (typeof CHANNEL_MESSAGE_ACTION_NAMES)[number];
+export type ChannelMessageActionName = (typeof CHANNEL_MESSAGE_ACTION_NAMES)[number];

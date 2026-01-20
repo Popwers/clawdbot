@@ -1,13 +1,6 @@
-import path from "node:path";
-import { resolveGatewayLaunchAgentLabel } from "../daemon/constants.js";
-import { resolveGatewayProgramArguments } from "../daemon/program-args.js";
-import {
-  renderSystemNodeWarning,
-  resolvePreferredNodePath,
-  resolveSystemNodeInfo,
-} from "../daemon/runtime-paths.js";
+import { buildGatewayInstallPlan, gatewayInstallErrorHint } from "./daemon-install-helpers.js";
 import { resolveGatewayService } from "../daemon/service.js";
-import { buildServiceEnvironment } from "../daemon/service-env.js";
+import { withProgress } from "../cli/progress.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { note } from "../terminal/note.js";
 import { confirm, select } from "./configure.shared.js";
@@ -26,10 +19,7 @@ export async function maybeInstallDaemon(params: {
   daemonRuntime?: GatewayDaemonRuntime;
 }) {
   const service = resolveGatewayService();
-  const loaded = await service.isLoaded({
-    env: process.env,
-    profile: process.env.CLAWDBOT_PROFILE,
-  });
+  const loaded = await service.isLoaded({ env: process.env });
   let shouldCheckLinger = false;
   let shouldInstall = true;
   let daemonRuntime = params.daemonRuntime ?? DEFAULT_GATEWAY_DAEMON_RUNTIME;
@@ -46,66 +36,80 @@ export async function maybeInstallDaemon(params: {
       params.runtime,
     );
     if (action === "restart") {
-      await service.restart({
-        env: process.env,
-        profile: process.env.CLAWDBOT_PROFILE,
-        stdout: process.stdout,
-      });
+      await withProgress(
+        { label: "Gateway daemon", indeterminate: true, delayMs: 0 },
+        async (progress) => {
+          progress.setLabel("Restarting Gateway daemon…");
+          await service.restart({
+            env: process.env,
+            stdout: process.stdout,
+          });
+          progress.setLabel("Gateway daemon restarted.");
+        },
+      );
       shouldCheckLinger = true;
       shouldInstall = false;
     }
     if (action === "skip") return;
     if (action === "reinstall") {
-      await service.uninstall({ env: process.env, stdout: process.stdout });
+      await withProgress(
+        { label: "Gateway daemon", indeterminate: true, delayMs: 0 },
+        async (progress) => {
+          progress.setLabel("Uninstalling Gateway daemon…");
+          await service.uninstall({ env: process.env, stdout: process.stdout });
+          progress.setLabel("Gateway daemon uninstalled.");
+        },
+      );
     }
   }
 
   if (shouldInstall) {
-    if (!params.daemonRuntime) {
-      daemonRuntime = guardCancel(
-        await select({
-          message: "Gateway daemon runtime",
-          options: GATEWAY_DAEMON_RUNTIME_OPTIONS,
-          initialValue: DEFAULT_GATEWAY_DAEMON_RUNTIME,
-        }),
-        params.runtime,
-      ) as GatewayDaemonRuntime;
+    let installError: string | null = null;
+    await withProgress(
+      { label: "Gateway daemon", indeterminate: true, delayMs: 0 },
+      async (progress) => {
+        if (!params.daemonRuntime) {
+          daemonRuntime = guardCancel(
+            await select({
+              message: "Gateway daemon runtime",
+              options: GATEWAY_DAEMON_RUNTIME_OPTIONS,
+              initialValue: DEFAULT_GATEWAY_DAEMON_RUNTIME,
+            }),
+            params.runtime,
+          ) as GatewayDaemonRuntime;
+        }
+
+        progress.setLabel("Preparing Gateway daemon…");
+
+        const { programArguments, workingDirectory, environment } = await buildGatewayInstallPlan({
+          env: process.env,
+          port: params.port,
+          token: params.gatewayToken,
+          runtime: daemonRuntime,
+          warn: (message, title) => note(message, title),
+        });
+
+        progress.setLabel("Installing Gateway daemon…");
+        try {
+          await service.install({
+            env: process.env,
+            stdout: process.stdout,
+            programArguments,
+            workingDirectory,
+            environment,
+          });
+          progress.setLabel("Gateway daemon installed.");
+        } catch (err) {
+          installError = err instanceof Error ? err.message : String(err);
+          progress.setLabel("Gateway daemon install failed.");
+        }
+      },
+    );
+    if (installError) {
+      note("Gateway daemon install failed: " + installError, "Gateway");
+      note(gatewayInstallErrorHint(), "Gateway");
+      return;
     }
-    const devMode =
-      process.argv[1]?.includes(`${path.sep}src${path.sep}`) &&
-      process.argv[1]?.endsWith(".ts");
-    const nodePath = await resolvePreferredNodePath({
-      env: process.env,
-      runtime: daemonRuntime,
-    });
-    const { programArguments, workingDirectory } =
-      await resolveGatewayProgramArguments({
-        port: params.port,
-        dev: devMode,
-        runtime: daemonRuntime,
-        nodePath,
-      });
-    if (daemonRuntime === "node") {
-      const systemNode = await resolveSystemNodeInfo({ env: process.env });
-      const warning = renderSystemNodeWarning(systemNode, programArguments[0]);
-      if (warning) note(warning, "Gateway runtime");
-    }
-    const environment = buildServiceEnvironment({
-      env: process.env,
-      port: params.port,
-      token: params.gatewayToken,
-      launchdLabel:
-        process.platform === "darwin"
-          ? resolveGatewayLaunchAgentLabel(process.env.CLAWDBOT_PROFILE)
-          : undefined,
-    });
-    await service.install({
-      env: process.env,
-      stdout: process.stdout,
-      programArguments,
-      workingDirectory,
-      environment,
-    });
     shouldCheckLinger = true;
   }
 
@@ -113,8 +117,7 @@ export async function maybeInstallDaemon(params: {
     await ensureSystemdUserLingerInteractive({
       runtime: params.runtime,
       prompter: {
-        confirm: async (p) =>
-          guardCancel(await confirm(p), params.runtime) === true,
+        confirm: async (p) => guardCancel(await confirm(p), params.runtime) === true,
         note,
       },
       reason:

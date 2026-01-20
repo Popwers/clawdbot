@@ -1,5 +1,5 @@
 import { clampPercent } from "./provider-usage.shared.js";
-import type { UsageSummary, UsageWindow } from "./provider-usage.types.js";
+import type { ProviderUsageSnapshot, UsageSummary, UsageWindow } from "./provider-usage.types.js";
 
 function formatResetRemaining(targetMs?: number, now?: number): string | null {
   if (!targetMs) return null;
@@ -25,9 +25,7 @@ function formatResetRemaining(targetMs?: number, now?: number): string | null {
 
 function pickPrimaryWindow(windows: UsageWindow[]): UsageWindow | undefined {
   if (windows.length === 0) return undefined;
-  return windows.reduce((best, next) =>
-    next.usedPercent > best.usedPercent ? next : best,
-  );
+  return windows.reduce((best, next) => (next.usedPercent > best.usedPercent ? next : best));
 }
 
 function formatWindowShort(window: UsageWindow, now?: number): string {
@@ -35,6 +33,28 @@ function formatWindowShort(window: UsageWindow, now?: number): string {
   const reset = formatResetRemaining(window.resetAt, now);
   const resetSuffix = reset ? ` ⏱${reset}` : "";
   return `${remaining.toFixed(0)}% left (${window.label}${resetSuffix})`;
+}
+
+export function formatUsageWindowSummary(
+  snapshot: ProviderUsageSnapshot,
+  opts?: { now?: number; maxWindows?: number; includeResets?: boolean },
+): string | null {
+  if (snapshot.error) return `error: ${snapshot.error}`;
+  if (snapshot.windows.length === 0) return null;
+  const now = opts?.now ?? Date.now();
+  const maxWindows =
+    typeof opts?.maxWindows === "number" && opts.maxWindows > 0
+      ? Math.min(opts.maxWindows, snapshot.windows.length)
+      : snapshot.windows.length;
+  const includeResets = opts?.includeResets ?? false;
+  const windows = snapshot.windows.slice(0, maxWindows);
+  const parts = windows.map((window) => {
+    const remaining = clampPercent(100 - window.usedPercent);
+    const reset = includeResets ? formatResetRemaining(window.resetAt, now) : null;
+    const resetSuffix = reset ? ` ⏱${reset}` : "";
+    return `${window.label} ${remaining.toFixed(0)}% left${resetSuffix}`;
+  });
+  return parts.join(" · ");
 }
 
 export function formatUsageSummaryLine(
@@ -58,10 +78,7 @@ export function formatUsageSummaryLine(
   return `📊 Usage: ${parts.join(" · ")}`;
 }
 
-export function formatUsageReportLines(
-  summary: UsageSummary,
-  opts?: { now?: number },
-): string[] {
+export function formatUsageReportLines(summary: UsageSummary, opts?: { now?: number }): string[] {
   if (summary.providers.length === 0) {
     return ["Usage: no provider usage available."];
   }
@@ -82,9 +99,7 @@ export function formatUsageReportLines(
       const remaining = clampPercent(100 - window.usedPercent);
       const reset = formatResetRemaining(window.resetAt, opts?.now);
       const resetSuffix = reset ? ` · resets ${reset}` : "";
-      lines.push(
-        `    ${window.label}: ${remaining.toFixed(0)}% left${resetSuffix}`,
-      );
+      lines.push(`    ${window.label}: ${remaining.toFixed(0)}% left${resetSuffix}`);
     }
   }
   return lines;

@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeEnv } from "../runtime.js";
+import { setActivePluginRegistry } from "../plugins/runtime.js";
+import { createTestRegistry } from "../test-utils/channel-plugins.js";
+import { discordPlugin } from "../../extensions/discord/src/channel.js";
+import { imessagePlugin } from "../../extensions/imessage/src/channel.js";
+import { signalPlugin } from "../../extensions/signal/src/channel.js";
+import { slackPlugin } from "../../extensions/slack/src/channel.js";
+import { telegramPlugin } from "../../extensions/telegram/src/channel.js";
+import { whatsappPlugin } from "../../extensions/whatsapp/src/channel.js";
 
 const configMocks = vi.hoisted(() => ({
   readConfigFileSnapshot: vi.fn(),
@@ -21,8 +29,7 @@ vi.mock("../config/config.js", async (importOriginal) => {
 });
 
 vi.mock("../agents/auth-profiles.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../agents/auth-profiles.js")>();
+  const actual = await importOriginal<typeof import("../agents/auth-profiles.js")>();
   return {
     ...actual,
     loadAuthProfileStore: authMocks.loadAuthProfileStore,
@@ -65,6 +72,16 @@ describe("channels command", () => {
       version: 1,
       profiles: {},
     });
+    setActivePluginRegistry(
+      createTestRegistry([
+        { pluginId: "discord", plugin: discordPlugin, source: "test" },
+        { pluginId: "slack", plugin: slackPlugin, source: "test" },
+        { pluginId: "telegram", plugin: telegramPlugin, source: "test" },
+        { pluginId: "whatsapp", plugin: whatsappPlugin, source: "test" },
+        { pluginId: "signal", plugin: signalPlugin, source: "test" },
+        { pluginId: "imessage", plugin: imessagePlugin, source: "test" },
+      ]),
+    );
   });
 
   it("adds a non-default telegram account", async () => {
@@ -127,11 +144,9 @@ describe("channels command", () => {
       },
     });
 
-    await channelsRemoveCommand(
-      { channel: "discord", account: "work", delete: true },
-      runtime,
-      { hasFlags: true },
-    );
+    await channelsRemoveCommand({ channel: "discord", account: "work", delete: true }, runtime, {
+      hasFlags: true,
+    });
 
     expect(configMocks.writeConfigFile).toHaveBeenCalledTimes(1);
     const next = configMocks.writeConfigFile.mock.calls[0]?.[0] as {
@@ -156,9 +171,7 @@ describe("channels command", () => {
         whatsapp?: { accounts?: Record<string, { name?: string }> };
       };
     };
-    expect(next.channels?.whatsapp?.accounts?.family?.name).toBe(
-      "Family Phone",
-    );
+    expect(next.channels?.whatsapp?.accounts?.family?.name).toBe("Family Phone");
   });
 
   it("adds a second signal account with a distinct name", async () => {
@@ -212,11 +225,9 @@ describe("channels command", () => {
       .spyOn(prompterModule, "createClackPrompter")
       .mockReturnValue(prompt as never);
 
-    await channelsRemoveCommand(
-      { channel: "discord", account: "default" },
-      runtime,
-      { hasFlags: true },
-    );
+    await channelsRemoveCommand({ channel: "discord", account: "default" }, runtime, {
+      hasFlags: true,
+    });
 
     const next = configMocks.writeConfigFile.mock.calls[0]?.[0] as {
       channels?: { discord?: { enabled?: boolean } };
@@ -253,9 +264,9 @@ describe("channels command", () => {
     });
 
     await channelsListCommand({ json: true, usage: false }, runtime);
-    const payload = JSON.parse(
-      String(runtime.log.mock.calls[0]?.[0] ?? "{}"),
-    ) as { auth?: Array<{ id: string }> };
+    const payload = JSON.parse(String(runtime.log.mock.calls[0]?.[0] ?? "{}")) as {
+      auth?: Array<{ id: string }>;
+    };
     const ids = payload.auth?.map((entry) => entry.id) ?? [];
     expect(ids).toContain("anthropic:claude-cli");
     expect(ids).toContain("openai-codex:codex-cli");
@@ -296,9 +307,7 @@ describe("channels command", () => {
       };
     };
     expect(next.channels?.telegram?.name).toBeUndefined();
-    expect(next.channels?.telegram?.accounts?.default?.name).toBe(
-      "Primary Bot",
-    );
+    expect(next.channels?.telegram?.accounts?.default?.name).toBe("Primary Bot");
   });
 
   it("migrates base names when adding non-default accounts", async () => {
@@ -314,11 +323,9 @@ describe("channels command", () => {
       },
     });
 
-    await channelsAddCommand(
-      { channel: "discord", account: "work", token: "d1" },
-      runtime,
-      { hasFlags: true },
-    );
+    await channelsAddCommand({ channel: "discord", account: "work", token: "d1" }, runtime, {
+      hasFlags: true,
+    });
 
     const next = configMocks.writeConfigFile.mock.calls[0]?.[0] as {
       channels?: {
@@ -341,12 +348,8 @@ describe("channels command", () => {
       },
     });
 
-    const telegramIndex = lines.findIndex((line) =>
-      line.includes("Telegram default"),
-    );
-    const whatsappIndex = lines.findIndex((line) =>
-      line.includes("WhatsApp default"),
-    );
+    const telegramIndex = lines.findIndex((line) => line.includes("Telegram default"));
+    const whatsappIndex = lines.findIndex((line) => line.includes("WhatsApp default"));
     expect(telegramIndex).toBeGreaterThan(-1);
     expect(whatsappIndex).toBeGreaterThan(-1);
     expect(telegramIndex).toBeLessThan(whatsappIndex);
@@ -412,6 +415,22 @@ describe("channels command", () => {
     });
     expect(lines.join("\n")).toMatch(/Warnings:/);
     expect(lines.join("\n")).toMatch(/Telegram Bot API privacy mode/i);
+  });
+
+  it("includes Telegram bot username from probe data", () => {
+    const lines = formatGatewayChannelsStatusLines({
+      channelAccounts: {
+        telegram: [
+          {
+            accountId: "default",
+            enabled: true,
+            configured: true,
+            probe: { ok: true, bot: { username: "clawdbot_bot" } },
+          },
+        ],
+      },
+    });
+    expect(lines.join("\n")).toMatch(/bot:@clawdbot_bot/);
   });
 
   it("surfaces Telegram group membership audit issues in channels status output", () => {

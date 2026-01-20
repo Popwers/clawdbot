@@ -25,6 +25,7 @@ type DiscordSendOpts = {
   rest?: RequestClient;
   replyTo?: string;
   retry?: RetryConfig;
+  embeds?: unknown[];
 };
 
 export async function sendMessageDiscord(
@@ -40,9 +41,7 @@ export async function sendMessageDiscord(
   const { token, rest, request } = createDiscordClient(opts, cfg);
   const recipient = parseRecipient(to);
   const { channelId } = await resolveChannelId(rest, recipient, request);
-  let result:
-    | { id: string; channel_id: string }
-    | { id: string | null; channel_id: string };
+  let result: { id: string; channel_id: string } | { id: string | null; channel_id: string };
   try {
     if (opts.mediaUrl) {
       result = await sendDiscordMedia(
@@ -53,6 +52,7 @@ export async function sendMessageDiscord(
         opts.replyTo,
         request,
         accountInfo.config.maxLinesPerMessage,
+        opts.embeds,
       );
     } else {
       result = await sendDiscordText(
@@ -62,6 +62,7 @@ export async function sendMessageDiscord(
         opts.replyTo,
         request,
         accountInfo.config.maxLinesPerMessage,
+        opts.embeds,
       );
     }
   } catch (err) {

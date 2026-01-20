@@ -28,14 +28,9 @@ services:
     restart: unless-stopped
     command:
       [
-        "node",
-        "dist/index.js",
-        "gateway-daemon",
-        "--bind",
-        "${CLAWDBOT_GATEWAY_BIND:-lan}",
-        "--port",
-        "${CLAWDBOT_GATEWAY_PORT:-18789}",
-        "--allow-unconfigured"
+        "sh",
+        "-lc",
+        "node dist/index.js doctor --fix && node dist/index.js gateway --bind ${CLAWDBOT_GATEWAY_BIND:-lan} --port ${CLAWDBOT_GATEWAY_PORT:-18789} --allow-unconfigured"
       ]
 
 

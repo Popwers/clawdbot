@@ -31,7 +31,7 @@ Requires a `whisper` CLI installed (this can be `whisper.cpp` via a `whisper` wr
           {
             type: "cli",
             command: "whisper",
-            args: ["--model", "base", "{{MediaPath}}"],
+            args: ["--model", "base", "--language", "fr", "{{MediaPath}}"],
             timeoutSeconds: 45
           }
         ]

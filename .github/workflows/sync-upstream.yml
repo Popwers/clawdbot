@@ -37,7 +37,14 @@ jobs:
 
       - name: Sync main with upstream
         run: |
-          git switch "${MAIN_BRANCH}"
+          git fetch origin "${MAIN_BRANCH}" || true
+          if git show-ref --verify --quiet "refs/heads/${MAIN_BRANCH}"; then
+            git switch "${MAIN_BRANCH}"
+          elif git show-ref --verify --quiet "refs/remotes/origin/${MAIN_BRANCH}"; then
+            git switch -c "${MAIN_BRANCH}" "origin/${MAIN_BRANCH}"
+          else
+            git switch -c "${MAIN_BRANCH}"
+          fi
           git reset --hard "upstream/${MAIN_BRANCH}"
           git push --force-with-lease origin "${MAIN_BRANCH}"
 

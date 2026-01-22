@@ -31,7 +31,7 @@ services:
       [
         "node",
         "dist/index.js",
-        "gateway",
+        "gateway-daemon",
         "--bind",
         "${CLAWDBOT_GATEWAY_BIND:-lan}",
         "--port",

@@ -12,7 +12,8 @@ concurrency:
 
 env:
   UPSTREAM_REPO: clawdbot/clawdbot
-  TARGET_BRANCH: main
+  MAIN_BRANCH: main
+  CUSTOM_BRANCH: custom
 
 jobs:
   rebase:
@@ -25,8 +26,8 @@ jobs:
 
       - name: Configure git
         run: |
-          git config user.name "Popwers"
-          git config user.email "lionel.bataille@hotmail.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Fetch upstream
         run: |
@@ -34,8 +35,21 @@ jobs:
             git remote set-url upstream "https://github.com/${UPSTREAM_REPO}.git"
           git fetch upstream --prune
 
-      - name: Rebase and push
+      - name: Sync main with upstream
         run: |
-          git switch "${TARGET_BRANCH}"
-          git rebase "upstream/${TARGET_BRANCH}"
-          git push --force-with-lease origin "${TARGET_BRANCH}"
+          git switch "${MAIN_BRANCH}"
+          git reset --hard "upstream/${MAIN_BRANCH}"
+          git push --force-with-lease origin "${MAIN_BRANCH}"
+
+      - name: Rebase custom on main
+        run: |
+          git fetch origin "${CUSTOM_BRANCH}" || true
+          if git show-ref --verify --quiet "refs/heads/${CUSTOM_BRANCH}"; then
+            git switch "${CUSTOM_BRANCH}"
+          elif git show-ref --verify --quiet "refs/remotes/origin/${CUSTOM_BRANCH}"; then
+            git switch -c "${CUSTOM_BRANCH}" "origin/${CUSTOM_BRANCH}"
+          else
+            git switch -c "${CUSTOM_BRANCH}"
+          fi
+          git rebase -X ours "${MAIN_BRANCH}"
+          git push --force-with-lease origin "${CUSTOM_BRANCH}"

@@ -20,6 +20,7 @@ services:
       - ${CLAWDBOT_CONFIG_DIR}:/home/node/.clawdbot
       - ${CLAWDBOT_WORKSPACE_DIR}:/home/node/clawd
       - ${CLAWDBOT_USER_CONFIG_DIR}:/home/node/.config
+      - ${CLAWDBOT_AGENTS_DIR:-${HOME}/.agents}:/home/node/.agents
       - ${CLAWDBOT_WHISPER_CACHE_VOLUME:-clawdbot-whisper-cache}:/opt/whisper-cache
     ports:
       - "${CLAWDBOT_GATEWAY_PORT:-18789}:18789"

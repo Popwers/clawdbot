@@ -14,52 +14,6 @@ if [[ "${CLAWDBOT_USE_OPENCODE:-false}" == "true" ]]; then
   fi
 fi
 
-normalize_context_pruning_config() {
-  local config_path="${CLAWDBOT_CONFIG_PATH:-/home/node/.clawdbot/clawdbot.json}"
-
-  if [[ ! -f "$config_path" ]]; then
-    return 0
-  fi
-
-  node --input-type=module <<'EOF' || return 0
-import fs from 'node:fs';
-import JSON5 from 'json5';
-
-const configPath = process.env.CLAWDBOT_CONFIG_PATH ?? '/home/node/.clawdbot/clawdbot.json';
-
-if (!fs.existsSync(configPath)) {
-  process.exit(0);
-}
-
-let raw;
-try {
-  raw = fs.readFileSync(configPath, 'utf8');
-} catch {
-  process.exit(0);
-}
-
-let config;
-try {
-  config = JSON5.parse(raw);
-} catch {
-  process.exit(0);
-}
-
-const agents = (config.agents ??= {});
-const defaults = (agents.defaults ??= {});
-const contextPruning = (defaults.contextPruning ??= {});
-
-if (contextPruning.mode !== 'adaptive') {
-  process.exit(0);
-}
-
-contextPruning.mode = 'cache-ttl';
-fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
-EOF
-
-  chown 1000:1000 "$config_path" 2>/dev/null || true
-}
-
 preload_whisper() {
   local model="${CLAWDBOT_WHISPER_MODEL:-base}"
   local preload="${CLAWDBOT_WHISPER_PRELOAD:-true}"
@@ -95,8 +49,6 @@ preload_whisper() {
 
   chmod a+r "$model_path" 2>/dev/null || true
 }
-
-normalize_context_pruning_config
 
 preload_whisper
 
